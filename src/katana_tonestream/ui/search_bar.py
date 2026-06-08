@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import flet as ft
 
+from ..config import toneexchange_credentials
 from . import theme
 
 _FILTERS = [
@@ -52,16 +53,51 @@ class SearchBar:
     def _trigger(self) -> None:
         self._on_search(self.query, self.filter)
 
+    def _has_te_credentials(self) -> bool:
+        username, password = toneexchange_credentials()
+        return bool(username and password)
+
     def _rebuild_chips(self) -> None:
         self._filter_row.controls.clear()
         for value, label in _FILTERS:
-            self._filter_row.controls.append(
-                theme.chip(
-                    label,
-                    active=self.filter == value,
-                    on_tap=lambda e, v=value: self._set_filter(v),
+            # Show a warning badge on ToneExchange when credentials are missing
+            if value == "toneexchange" and not self._has_te_credentials():
+                display = ft.Row(
+                    [
+                        ft.Text(label, size=12, weight=ft.FontWeight.W_500,
+                                color="#FFFFFF" if self.filter == value else theme.TEXT_DIM),
+                        ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=13, color="#F59E0B"),
+                    ],
+                    spacing=4,
+                    tight=True,
                 )
-            )
+                container = ft.Container(
+                    display,
+                    padding=ft.Padding.symmetric(horizontal=13, vertical=6),
+                    border_radius=16,
+                    bgcolor=theme.AMBER_DARK if self.filter == value else theme.CARD_BG,
+                    border=ft.Border.all(
+                        1, theme.AMBER if self.filter == value else theme.BORDER_DIM
+                    ),
+                    tooltip="ToneExchange credentials not set — configure in Settings",
+                    animate=ft.Animation(150, ft.AnimationCurve.EASE_IN_OUT),
+                )
+                self._filter_row.controls.append(
+                    ft.GestureDetector(container, on_tap=lambda e, v=value: self._set_filter(v))
+                )
+            else:
+                self._filter_row.controls.append(
+                    theme.chip(
+                        label,
+                        active=self.filter == value,
+                        on_tap=lambda e, v=value: self._set_filter(v),
+                    )
+                )
+
+    def refresh_chips(self) -> None:
+        """Rebuild and repaint chips (call after credentials change)."""
+        self._rebuild_chips()
+        self._page.update()
 
     def _set_filter(self, value: str) -> None:
         self.filter = value

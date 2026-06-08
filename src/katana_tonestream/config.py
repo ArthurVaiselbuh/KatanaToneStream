@@ -1,6 +1,11 @@
-"""Application configuration — reads config.ini using RawConfigParser.
+"""Application configuration — keyring for credentials, config.ini for everything else.
 
-Search order (first found wins):
+Credentials (ToneExchange username/password) are stored in the OS keyring
+(Windows Credential Manager). ``set_toneexchange_credentials`` / ``delete_toneexchange_credentials``
+are the write path; the UI settings pane calls them. config.ini is NOT used for
+credentials — only for non-secret settings like [midi] target_patch.
+
+config.ini search order (first found wins):
   1. ~/.katana_tonestream/config.ini
   2. config.ini next to main.py (project root / working directory)
 """
@@ -12,6 +17,17 @@ from pathlib import Path
 from . import paths
 
 log = logging.getLogger(__name__)
+
+_KEYRING_SERVICE = "katana_tonestream"
+_KEYRING_USER_KEY = "toneexchange_username"
+_KEYRING_PASS_KEY = "toneexchange_password"
+
+try:
+    import keyring as _keyring
+    _KEYRING_OK = True
+except Exception:
+    _KEYRING_OK = False
+    log.warning("keyring not available — credentials cannot be stored securely")
 
 
 def _search_paths() -> list[Path]:
@@ -53,11 +69,41 @@ def midi_target_patch() -> int:
     return -1  # no config → default to TONE-only (no PC)
 
 
+# ── ToneExchange credentials (keyring) ───────────────────────────────────────
+
 def toneexchange_credentials() -> tuple[str, str]:
-    """Return (username, password) from [toneexchange] section, or ('', '')."""
-    username = get("toneexchange", "username")
-    password = get("toneexchange", "password")
-    # Treat the placeholder values as absent
-    if username == "your_email@example.com" or password == "your_password_here":
+    """Return (username, password) from the OS keyring, or ('', '') if not set."""
+    if not _KEYRING_OK:
         return "", ""
-    return username, password
+    try:
+        username = _keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER_KEY) or ""
+        password = _keyring.get_password(_KEYRING_SERVICE, _KEYRING_PASS_KEY) or ""
+        return username, password
+    except Exception:
+        log.warning("Failed to read credentials from keyring", exc_info=True)
+        return "", ""
+
+
+def set_toneexchange_credentials(username: str, password: str) -> bool:
+    """Save credentials to the OS keyring. Returns True on success."""
+    if not _KEYRING_OK:
+        return False
+    try:
+        _keyring.set_password(_KEYRING_SERVICE, _KEYRING_USER_KEY, username)
+        _keyring.set_password(_KEYRING_SERVICE, _KEYRING_PASS_KEY, password)
+        log.info("ToneExchange credentials saved to keyring")
+        return True
+    except Exception:
+        log.warning("Failed to save credentials to keyring", exc_info=True)
+        return False
+
+
+def delete_toneexchange_credentials() -> None:
+    """Remove ToneExchange credentials from the keyring."""
+    if not _KEYRING_OK:
+        return
+    for key in (_KEYRING_USER_KEY, _KEYRING_PASS_KEY):
+        try:
+            _keyring.delete_password(_KEYRING_SERVICE, key)
+        except Exception:
+            pass

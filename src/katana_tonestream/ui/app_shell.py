@@ -9,13 +9,10 @@ import logging
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 
 import flet as ft
 
-_ICON = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "logo.ico"
-
-from ..cache import get_art_path, get_cached_patches, save_art
+from ..cache import delete_patch, get_art_path, get_cached_patches, save_art
 from ..config import midi_target_patch
 from ..fetcher import fetch_art
 from ..logging_setup import FletLogHandler
@@ -25,6 +22,7 @@ from . import theme
 from .log_panel import LogPanel
 from .patch_card import PatchCard
 from .search_bar import SearchBar
+from .settings_pane import SettingsPane
 from .slot_picker import SlotPicker
 
 log = logging.getLogger(__name__)
@@ -44,6 +42,7 @@ class AppShell:
         cfg_patch = midi_target_patch()
         self.slot_picker = SlotPicker(page, initial=cfg_patch if cfg_patch >= 0 else None)
         self.log_panel = LogPanel(page, ui_log)
+        self.settings_pane = SettingsPane(page, on_credentials_changed=self._on_credentials_changed)
         self.search_bar = SearchBar(page, self._on_search)
 
         self._build_page()
@@ -51,6 +50,8 @@ class AppShell:
 
     # ── Status + MIDI indicator ─────────────────────────────────────────────
     def _set_status(self, msg: str) -> None:
+        if not self.midi.is_connected():
+            return
         self._status_text.value = f"{msg}  ·  {datetime.now().strftime('%H:%M:%S')}"
         self.page.update()
 
@@ -61,12 +62,23 @@ class AppShell:
         self._midi_label.color = c
         self._midi_label.value = f"Katana  ·  {self.midi.port_name}" if ok else "Disconnected"
         self._midi_chip.border = ft.Border.all(1, c)
+        self._status_bar.bgcolor = theme.SURFACE_VAR if ok else "#1A1010"
+        self._status_text.color = theme.TEXT_DIM if ok else _MIDI_BAD
+        if not ok:
+            self._status_text.value = "No amp connected"
+        for card in self._cards.values():
+            card.refresh_apply_state()
         self.page.update()
+
+    # ── Credentials changed ─────────────────────────────────────────────────
+    def _on_credentials_changed(self) -> None:
+        self.search_bar.refresh_chips()
 
     # ── Cards ───────────────────────────────────────────────────────────────
     def _make_card(self, meta: PatchMeta) -> ft.Control:
-        card = PatchCard(meta, self._apply, self.page)
+        card = PatchCard(meta, self._apply, self._remove, self.page, self.midi.is_connected)
         self._cards[meta.id] = card
+        card.refresh_apply_state()
         return card.control
 
     def _render_results(self, results: list[PatchMeta]) -> None:
@@ -83,11 +95,14 @@ class AppShell:
         self.page.run_thread(self._do_search, query, source_filter)
 
     def _do_search(self, query: str, source_filter: str) -> None:
-        self._set_status("Searching…")
+        self._status_text.value = f"Searching…  ·  {datetime.now().strftime('%H:%M:%S')}"
+        self.page.update()
         results = self.service.search(query, source_filter)
         self._render_results(results)
         noun = "patch" if len(results) == 1 else "patches"
-        self._set_status(f"Found {len(results)} {noun}" + (f" for '{query}'" if query else ""))
+        msg = f"Found {len(results)} {noun}" + (f" for '{query}'" if query else "")
+        if self.midi.is_connected():
+            self._status_text.value = f"{msg}  ·  {datetime.now().strftime('%H:%M:%S')}"
         self.page.update()
         self.page.run_thread(self._load_arts, results)
 
@@ -116,6 +131,20 @@ class AppShell:
             self._applying.discard(meta.id)
             if card:
                 card.set_busy(False)
+
+    # ── Remove ──────────────────────────────────────────────────────────────
+    def _remove(self, meta: PatchMeta) -> None:
+        self.page.run_thread(self._remove_worker, meta)
+
+    def _remove_worker(self, meta: PatchMeta) -> None:
+        delete_patch(meta.id)
+        card = self._cards.pop(meta.id, None)
+        if card and card.control in self._results_list.controls:
+            self._results_list.controls.remove(card.control)
+        has = len(self._results_list.controls) > 0
+        self._empty_state.visible = not has
+        self._results_wrapper.visible = has
+        self.page.update()
 
     # ── Art loading ─────────────────────────────────────────────────────────
     def _load_arts(self, metas: list[PatchMeta]) -> None:
@@ -157,7 +186,9 @@ class AppShell:
         if not cached:
             return
         self._render_results(cached)
-        self._set_status(f"Loaded {len(cached)} cached patch(es) — search or browse for more")
+        self._status_text.value = (
+            f"Loaded {len(cached)} cached patch(es) — search or browse for more"
+        )
         self.page.update()
         self.page.run_thread(self._load_arts, cached)
 
@@ -173,8 +204,6 @@ class AppShell:
         page.window.height = 740
         page.window.min_width = 700
         page.window.min_height = 540
-        if _ICON.exists():
-            page.window.icon = str(_ICON)
 
         self._midi_dot = ft.Icon(ft.Icons.CIRCLE, size=9, color=_MIDI_BAD)
         self._midi_label = ft.Text("Disconnected", size=12, color=_MIDI_BAD)
@@ -186,6 +215,13 @@ class AppShell:
             margin=ft.Margin.only(right=10),
         )
 
+        settings_btn = ft.IconButton(
+            ft.Icons.SETTINGS_OUTLINED,
+            tooltip="Settings",
+            icon_color=theme.TEXT_DIM,
+            on_click=lambda e: self.settings_pane.toggle(),
+        )
+
         page.appbar = ft.AppBar(
             leading=ft.Container(
                 ft.Icon(ft.Icons.GRAPHIC_EQ, color=theme.AMBER, size=24),
@@ -195,17 +231,22 @@ class AppShell:
             title=ft.Text("KatanaToneStream", weight=ft.FontWeight.BOLD, size=17, color="#FFFFFF"),
             center_title=False,
             bgcolor=theme.SURFACE_VAR,
-            actions=[self._midi_chip, self.slot_picker.control, self.log_panel.toggle_button],
+            actions=[
+                self._midi_chip,
+                self.slot_picker.control,
+                settings_btn,
+                self.log_panel.toggle_button,
+            ],
         )
 
-        self._status_text = ft.Text("Ready", size=12, color=theme.TEXT_DIM)
-        status_bar = ft.Container(
+        self._status_text = ft.Text("No amp connected", size=12, color=_MIDI_BAD)
+        self._status_bar = ft.Container(
             ft.Row(
                 [ft.Icon(ft.Icons.INFO_OUTLINE, size=13, color=theme.TEXT_DIM), self._status_text],
                 spacing=6,
             ),
             padding=ft.Padding.symmetric(horizontal=16, vertical=8),
-            bgcolor=theme.SURFACE_VAR,
+            bgcolor="#1A1010",
         )
 
         self._results_list = ft.ListView(
@@ -228,7 +269,7 @@ class AppShell:
         results_area = ft.Stack([self._empty_state, self._results_wrapper], expand=True)
 
         content_row = ft.Row(
-            [results_area, self.log_panel.control],
+            [results_area, self.settings_pane.control, self.log_panel.control],
             spacing=0,
             expand=True,
             vertical_alignment=ft.CrossAxisAlignment.STRETCH,
@@ -241,7 +282,7 @@ class AppShell:
                     ft.Divider(height=1, color=theme.BORDER_DIM),
                     content_row,
                     ft.Divider(height=1, color=theme.BORDER_DIM),
-                    status_bar,
+                    self._status_bar,
                 ],
                 spacing=0,
                 expand=True,

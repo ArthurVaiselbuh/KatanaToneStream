@@ -22,10 +22,16 @@ class PatchCard:
     """Builds and owns the controls for a single patch result."""
 
     def __init__(
-        self, meta: PatchMeta, on_apply: Callable[[PatchMeta], None], page: ft.Page
+        self,
+        meta: PatchMeta,
+        on_apply: Callable[[PatchMeta], None],
+        on_remove: Callable[[PatchMeta], None],
+        page: ft.Page,
+        midi_connected: Callable[[], bool],
     ) -> None:
         self.meta = meta
         self._page = page
+        self._midi_connected = midi_connected
 
         self._apply_btn = theme.amber_button(
             "Apply",
@@ -38,6 +44,20 @@ class PatchCard:
         self._spinner = ft.ProgressRing(
             width=22, height=22, stroke_width=2, visible=False, color=theme.AMBER
         )
+
+        cached = is_cached(meta.id)
+        self._remove_btn = ft.IconButton(
+            ft.Icons.DELETE_OUTLINE,
+            icon_size=15,
+            icon_color=theme.TEXT_DIM,
+            tooltip="Remove from cache",
+            visible=cached,
+            on_click=lambda e: on_remove(meta),
+            style=ft.ButtonStyle(
+                padding=ft.Padding.all(4),
+                overlay_color={ft.ControlState.HOVERED: "#3A2020"},
+            ),
+        )
         self._cached_pill = ft.Container(
             ft.Row(
                 [ft.Icon(ft.Icons.STAR_ROUNDED, size=11, color=theme.AMBER),
@@ -47,7 +67,7 @@ class PatchCard:
             padding=ft.Padding.symmetric(horizontal=6, vertical=2),
             border_radius=8,
             border=ft.Border.all(1, theme.AMBER),
-            visible=is_cached(meta.id),
+            visible=cached,
         )
 
         art_path = get_art_path(meta.id)
@@ -65,8 +85,9 @@ class PatchCard:
                 ft.Row(
                     [ft.Text(meta.name or "Unnamed Patch",
                              weight=ft.FontWeight.W_600, size=14, expand=True),
-                     self._cached_pill],
-                    spacing=6,
+                     self._cached_pill,
+                     self._remove_btn],
+                    spacing=4,
                 ),
                 ft.Text(meta.author or "Unknown author", size=11, color=theme.TEXT_DIM),
                 ft.Row([theme.source_badge(meta.source)], spacing=8),
@@ -99,8 +120,16 @@ class PatchCard:
 
     def mark_cached(self) -> None:
         self._cached_pill.visible = True
+        self._remove_btn.visible = True
         self._page.update()
 
     def set_art(self, path: Path) -> None:
         self._art_slot.content = _art_image(path)
+        self._page.update()
+
+    def refresh_apply_state(self) -> None:
+        """Enable/disable the apply button based on current MIDI connection."""
+        connected = self._midi_connected()
+        self._apply_btn.disabled = not connected
+        self._apply_btn.opacity = 1.0 if connected else 0.4
         self._page.update()

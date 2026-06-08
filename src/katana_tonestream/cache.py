@@ -127,3 +127,19 @@ def get_art_bytes(patch_id: str) -> bytes | None:
 def save_art(patch_id: str, data: bytes) -> None:
     paths.ensure_dirs()
     _art_path(patch_id).write_bytes(data)
+
+
+# ── Delete ────────────────────────────────────────────────────────────────────
+
+def delete_patch(patch_id: str) -> None:
+    """Remove a patch and its art from the local cache and index."""
+    tsl = paths.cache_dir() / f"{patch_id}.tsl"
+    if tsl.exists():
+        tsl.unlink()
+    art = _art_path(patch_id)
+    if art.exists():
+        art.unlink()
+    index = load_index()
+    if patch_id in index:
+        del index[patch_id]
+        _save_index(index)
