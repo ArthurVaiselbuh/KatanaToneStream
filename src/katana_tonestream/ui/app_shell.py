@@ -12,6 +12,7 @@ from datetime import datetime
 
 import flet as ft
 
+from ..art_resolver import resolve_art
 from ..cache import delete_patch, get_art_path, get_cached_patches, save_art
 from ..config import midi_target_patch
 from ..fetcher import fetch_art
@@ -149,12 +150,10 @@ class AppShell:
     # ── Art loading ─────────────────────────────────────────────────────────
     def _load_arts(self, metas: list[PatchMeta]) -> None:
         for meta in metas:
-            if not meta.image_url:
-                continue
             try:
                 path = get_art_path(meta.id)
                 if path is None:
-                    data = fetch_art(meta)
+                    data = resolve_art(meta) or fetch_art(meta)
                     if data:
                         save_art(meta.id, data)
                         path = get_art_path(meta.id)

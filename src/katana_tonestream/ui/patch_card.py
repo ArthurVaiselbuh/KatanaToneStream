@@ -32,6 +32,7 @@ class PatchCard:
         self.meta = meta
         self._page = page
         self._midi_connected = midi_connected
+        self._busy = False
 
         self._apply_btn = theme.amber_button(
             "Apply",
@@ -41,8 +42,11 @@ class PatchCard:
             padding_h=14,
             padding_v=9,
         )
-        self._spinner = ft.ProgressRing(
-            width=22, height=22, stroke_width=2, visible=False, color=theme.AMBER
+        self._spinner_wrap = ft.Container(
+            content=ft.ProgressRing(width=22, height=22, stroke_width=2, color=theme.AMBER),
+            alignment=ft.alignment.center,
+            expand=True,
+            opacity=0,
         )
 
         cached = is_cached(meta.id)
@@ -94,15 +98,11 @@ class PatchCard:
             ],
             expand=True, spacing=4,
         )
-        action_col = ft.Column(
-            [self._spinner, self._apply_btn],
-            horizontal_alignment=ft.CrossAxisAlignment.END,
-            spacing=0,
-        )
+        action_box = ft.Stack([self._apply_btn, self._spinner_wrap])
 
         self.control = ft.Container(
             ft.Row(
-                [self._art_slot, info_col, action_col],
+                [self._art_slot, info_col, action_box],
                 spacing=12,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -114,8 +114,10 @@ class PatchCard:
 
     # ── Live updates (call from the UI thread) ──────────────────────────────
     def set_busy(self, busy: bool) -> None:
-        self._apply_btn.visible = not busy
-        self._spinner.visible = busy
+        self._busy = busy
+        self._apply_btn.opacity = 0.0 if busy else (1.0 if self._midi_connected() else 0.4)
+        self._apply_btn.disabled = busy or not self._midi_connected()
+        self._spinner_wrap.opacity = 1.0 if busy else 0.0
         self._page.update()
 
     def mark_cached(self) -> None:
@@ -128,7 +130,9 @@ class PatchCard:
         self._page.update()
 
     def refresh_apply_state(self) -> None:
-        """Enable/disable the apply button based on current MIDI connection."""
+        """Dim/enable the apply button based on MIDI connection (skipped while busy)."""
+        if self._busy:
+            return
         connected = self._midi_connected()
         self._apply_btn.disabled = not connected
         self._apply_btn.opacity = 1.0 if connected else 0.4
