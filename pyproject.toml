@@ -1,0 +1,35 @@
+[project]
+name = "katana-tonestream"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "flet>=0.85",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "python-rtmidi>=1.5",
+]
+
+[dependency-groups]
+dev = [
+    "pillow>=12.2.0",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/katana_tonestream"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
