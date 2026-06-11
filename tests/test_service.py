@@ -29,8 +29,12 @@ class FakeMidi:
 
 def _meta(patch_id="t1", name="Test Patch"):
     return PatchMeta(
-        id=patch_id, name=name, author="", source="local",
-        rating=0.0, download_url="http://x",
+        id=patch_id,
+        name=name,
+        author="",
+        source="local",
+        rating=0.0,
+        download_url="http://x",
     )
 
 
@@ -83,8 +87,8 @@ def test_apply_parses_alb_fallback(app_home, monkeypatch):
     on_cached = []
     patch = svc.apply(_meta(), target_patch=None, on_cached=lambda: on_cached.append(True))
 
-    assert patch.raw_bytes is not None      # came from the .alb branch
-    assert on_cached == [True]              # fired because it was freshly downloaded
+    assert patch.raw_bytes is not None  # came from the .alb branch
+    assert on_cached == [True]  # fired because it was freshly downloaded
 
 
 def test_apply_connects_when_disconnected(app_home, monkeypatch, sample_tsl_bytes):

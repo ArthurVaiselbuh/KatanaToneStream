@@ -38,6 +38,16 @@ def test_parse_alb_sample_if_present():
 
 
 def test_liveset_branch():
+    # Patch_0 layout from address_map.js: [0]=od_on, [1]=od_type, [17]=preamp_type,
+    # [18]=preamp_gain, [20]=bass, [21]=mid, [22]=treble.
+    patch_0 = ["00"] * 23
+    patch_0[0] = "01"  # od_on = True
+    patch_0[1] = "05"  # od_type = 5
+    patch_0[17] = "03"  # preamp_type = 3 (HiGain)
+    patch_0[18] = "50"  # preamp_gain = 80
+    patch_0[21] = "40"  # mid = 64
+    status = ["00"] * 18
+    status[12] = "01"  # variation = 1
     liveset = {
         "device": "KATANA MkII",
         "name": "MyLiveset",
@@ -47,8 +57,9 @@ def test_liveset_branch():
                     "memo": "slot memo",
                     "paramSet": {
                         # "Test" = 0x54 0x65 0x73 0x74
-                        "UserPatch%PatchName": ["0x54", "0x65", "0x73", "0x74"],
-                        "UserPatch%Patch_0": ["0x01", "0x05", "0x32"],
+                        "UserPatch%PatchName": ["54", "65", "73", "74"],
+                        "UserPatch%Patch_0": patch_0,
+                        "UserPatch%Status": status,
                     },
                 }
             ]
@@ -59,8 +70,12 @@ def test_liveset_branch():
     p = patches[0]
     assert p.display_name == "Test"
     assert p.raw_bytes is not None
-    assert p.preamp_type == 0x05 & 0x0F
-    assert p.preamp_gain == 0x32
+    assert p.od_on is True
+    assert p.od_type == 0x05
+    assert p.preamp_type == 3
+    assert p.preamp_gain == 0x50
+    assert p.mid == 64
+    assert p.variation == 1
 
 
 def test_decode_patch_name():

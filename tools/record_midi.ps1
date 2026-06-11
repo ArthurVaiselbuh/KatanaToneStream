@@ -26,10 +26,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$midi = "C:\Program Files\Windows MIDI Services\Tools\Console\midi.exe"
-if (-not (Test-Path $midi)) {
-    throw "midi.exe not found. Install with: winget install Microsoft.WindowsMIDIServicesSDK"
-}
+$midi = "midi.exe"
 
 # Resolve the UMP endpoint id for the requested port from the enumeration.
 $idLine = & $midi enumerate midi-services-endpoints --show-endpoint-id 2>$null |
@@ -39,13 +36,13 @@ if (-not $idLine) {
     throw "No KATANA (KSA) endpoint found. Is the amp connected and powered on?"
 }
 $endpointId = "\\?\swd#midisrv#$idLine"
+Write-Host "Endpoint : $endpointId"
 
 $captureDir = Join-Path $PSScriptRoot "captures"
 New-Item -ItemType Directory -Force -Path $captureDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $out = Join-Path $captureDir "$Label`_$stamp.midi2"
 
-Write-Host "Endpoint : $endpointId"
 Write-Host "Capturing: $out"
 Write-Host "Now drive Tone Studio. Press ESC in this window to stop & flush.`n" -ForegroundColor Cyan
 

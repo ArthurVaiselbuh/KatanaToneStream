@@ -58,10 +58,51 @@ Strict layering, UI-free core so the flow is testable without Flet or a real amp
 - **`config.py`** — `config.ini` (RawConfigParser) from app dir or CWD.
   Placeholder credential values are treated as absent. `_cfg` is module-level;
   call `config.reload()` after changing the app dir (the `app_home` fixture does).
+  LLM API key is stored in keyring (`llm_api_key`); LLM provider key in `[llm] provider`
+  and model string in `[llm] model`.
+- **`llm_providers.py`** — `PROVIDERS` (curated provider list) and
+  `list_models(provider, api_key) -> list[str]`. Wraps litellm's
+  `get_valid_models(check_provider_endpoint=True, …)` to query the provider's real
+  `/models` endpoint, then normalises to `provider/model` form and filters out
+  non-chat models (embeddings/media). Non-blocking — returns `[]` on bad key/offline.
+  The settings pane uses this to populate the Model dropdown so model names can't
+  go stale or be mistyped.
+- **`katana_catalog.py`** — pure data module with all human-readable type enumerations:
+  `PREAMP_TYPES`, `OD_TYPES`, `FX_TYPES`, `DELAY_TYPES`, `REVERB_TYPES`. Sourced from
+  `assets/address_map.js` analysis and Boss Katana Mk2 documentation.
+- **`address_map_parser.py`** — `load_and_validate(path) -> None`. Checks that
+  `assets/address_map.js` exists and contains the expected Katana Mk2 section markers.
+  Raises `AddressMapError` on failure. Called once at startup; error → popup guard on
+  the Generate button.
+- **`llm_generator.py`** — `generate_patch(artist, song, api_key, model, on_progress) -> dict`.
+  Three-phase internal conversation (character → type selection → parameter values).
+  Phases and prompt strings are module-internal; the public API returns a single merged
+  dict. `on_progress(msg)` receives generic status strings the UI shows verbatim.
+  Pure function, no Flet — independently testable.
+- **`patch_builder.py`** — `build_raw_bytes(patch, template) -> dict` and
+  `get_template() -> dict | None`. Formalises the template approach: deep-copies
+  a base patch's `raw_bytes` and overwrites only the known byte positions.
+  `get_template()` returns the **bundled clean Tone Studio base**
+  (`assets/base_template.json` — the paramSet of a clean patch exported from Tone
+  Studio, byte-verified against a real MIDI send: 783/793 bytes match, the 10 diffs
+  are live-knob positions). Falls back to a cached real patch only if the bundle is
+  missing. **Known byte mappings** (authoritative from `address_map.js` + MIDI captures):
+  `Patch_0[0]`=od_on, `[1]`=od_type, `[2]`=od_drive, `[7]`=od_level, `[17]`=preamp_type,
+  `[18]`=preamp_gain, `[20]`=bass, `[21]`=mid (capture-confirmed addr `60 00 00 25`),
+  `[22]`=treble, `[23]`=presence; `Fx(1/2)[0]`=fx on/off, `[1]`=fx_type;
+  `Delay(1/2)[0]`=delay on/off, `[1]`=delay_type, `[6]`=delay_level;
+  `Patch_1[0]`=reverb on/off (capture-confirmed addr `60 00 05 40`), `[1]`=reverb_type,
+  `[8]`=reverb_level; `Status[12]`=amp green/red variation (capture-confirmed addr
+  `60 00 06 5C`). A channel switch sends **only** `Patch_0[17]` (PREAMP_A_TYPE) +
+  `Status[12]` (VARIATION) — the amp character is those two bytes; tone follows
+  PREAMP_A_TYPE. `katana_catalog.KATANA_CHANNELS` holds the 10 capture-derived panel
+  channels (name → preamp_type, variation); `variation_for_preamp()` derives the flag.
 - **`ui/`** — Flet components (`app_shell.py` wires everything; `patch_card`,
   `search_bar`, `slot_picker`, `log_panel`, `theme`). Components stay dumb;
   `AppShell` owns orchestration and background threads (MIDI monitor polls every
   5s, search/apply/art run via `page.run_thread`).
+  **Flet API patterns** (dialogs, alignment, padding, etc.) are documented in
+  `.claude/commands/flet.md` — run `/flet` to load them
 - **`logging_setup.py`** — explicit `setup_logging()` (called once in `app.run()`),
   returns a `FletLogHandler` the UI binds to. Note: flet's own loggers are muted
   to avoid a `page.update()` log-feedback cascade.
@@ -95,10 +136,12 @@ commit commands seen later in the capture) is not yet implemented.
 The machine has Windows MIDI Services (multi-client endpoints), so MIDI traffic
 can be sniffed *while Tone Studio runs* — no USBPcap/Wireshark needed.
 
-- **`record_midi.ps1`** — run in an **interactive** terminal, drive Tone Studio,
+- **`record_midi.py`** — run in an **interactive** terminal, drive Tone Studio,
   press **Esc** to stop (Esc is what flushes the capture file; a force-kill leaves
   a 0-byte file). The monitor crashes if stdin is redirected, so it cannot run
   headless/background. Writes timestamped `.midi2` UMP files to `captures/`.
+  Accepts `--label NAME`, `--output FILE`, and `--port KEYWORD` arguments.
+  (`record_midi.ps1` is superseded by this script.)
 - **`decode_capture.py`** — reassembles UMP SysEx7 packets into Roland frames:
   `uv run python tools/decode_capture.py captures/<file>.midi2 --dt1-only`
   (also `--rq1-only`, `--grep <addr-prefix>`).

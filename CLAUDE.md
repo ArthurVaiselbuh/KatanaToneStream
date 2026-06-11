@@ -8,3 +8,7 @@ The canonical codebase documentation lives in **AGENTS.md** — read that file f
 
 - The memory system at `~/.claude/projects/*/memory/` holds session-persistent notes (MIDI address map, capture toolchain, etc.). Check it when working on MIDI or capture-related code.
 - AGENTS.md is the source of truth; keep it updated when making architectural changes. Do not duplicate content here.
+
+## Flet API reference (auto-loaded)
+
+@.claude/commands/flet.md

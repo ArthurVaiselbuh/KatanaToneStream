@@ -68,6 +68,7 @@ class PatchService:
         fired once if a fresh download was saved to the cache. Raises on failure;
         callers handle/report the exception.
         """
+
         def status(msg: str) -> None:
             if on_status:
                 on_status(msg)

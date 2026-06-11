@@ -41,9 +41,12 @@ def scrape_toneexchange(query: str = "") -> list[PatchMeta]:
     results: list[PatchMeta] = []
     seen: set[str] = set()
 
-    api_headers = {**_HEADERS, "Accept": "application/json",
-                   "Origin": "https://bosstoneexchange.com",
-                   "Referer": "https://bosstoneexchange.com/"}
+    api_headers = {
+        **_HEADERS,
+        "Accept": "application/json",
+        "Origin": "https://bosstoneexchange.com",
+        "Referer": "https://bosstoneexchange.com/",
+    }
 
     for gear in _BTE_GEARS:
         params: dict[str, str] = {"gear": gear}

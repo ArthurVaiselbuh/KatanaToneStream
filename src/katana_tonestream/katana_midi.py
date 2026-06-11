@@ -27,14 +27,15 @@ log = logging.getLogger(__name__)
 
 KATANA_PORT_KEYWORD = "KATANA"
 ROLAND_MANUFACTURER = 0x41
-KATANA_MODEL_ID     = [0x00, 0x00, 0x00, 0x33]
-DEVICE_ID           = 0x00  # what Boss Tone Studio actually sends (confirmed by capture)
-SEND_DELAY_S        = 0.025   # 25 ms between SysEx packets (Roland spec)
-MAX_CHUNK           = 128     # Tone Studio caps DT1 payloads at 128 bytes, splitting larger
-                              # sections at the 0x100 page boundary (e.g. Fx = 128 + 97)
+KATANA_MODEL_ID = [0x00, 0x00, 0x00, 0x33]
+DEVICE_ID = 0x00  # what Boss Tone Studio actually sends (confirmed by capture)
+SEND_DELAY_S = 0.025  # 25 ms between SysEx packets (Roland spec)
+MAX_CHUNK = 128  # Tone Studio caps DT1 payloads at 128 bytes, splitting larger
+# sections at the 0x100 page boundary (e.g. Fx = 128 + 97)
 
 try:
     import rtmidi
+
     _RTMIDI_OK = True
 except ImportError:
     _RTMIDI_OK = False
@@ -44,6 +45,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Roland address helpers
 # ---------------------------------------------------------------------------
+
 
 def roland_checksum(data: list[int]) -> int:
     """Roland checksum over address + data bytes."""
@@ -67,13 +69,7 @@ def _build_dt1(address: list[int], data: list[int]) -> list[int]:
     """Build a complete Roland DT1 SysEx message."""
     payload = address + data
     chk = roland_checksum(payload)
-    return (
-        [0xF0, ROLAND_MANUFACTURER, DEVICE_ID]
-        + KATANA_MODEL_ID
-        + [0x12]
-        + payload
-        + [chk, 0xF7]
-    )
+    return [0xF0, ROLAND_MANUFACTURER, DEVICE_ID] + KATANA_MODEL_ID + [0x12] + payload + [chk, 0xF7]
 
 
 # ---------------------------------------------------------------------------
@@ -90,50 +86,53 @@ def _build_dt1(address: list[int], data: list[int]) -> list[int]:
 # all of them are sent — there is no longer an "unverified, skip" set.
 # ---------------------------------------------------------------------------
 
+
 class Section(NamedTuple):
     """A named TONE-area region and its Roland 4-byte base address."""
+
     key: str
     addr: list[int]
 
 
 _TONE_SECTIONS: list[Section] = [
-    Section("UserPatch%PatchName",            [0x60, 0x00, 0x00, 0x00]),
-    Section("UserPatch%Patch_0",              [0x60, 0x00, 0x00, 0x10]),
-    Section("UserPatch%Fx(1)",                [0x60, 0x00, 0x01, 0x00]),
-    Section("UserPatch%Fx(2)",                [0x60, 0x00, 0x03, 0x00]),
-    Section("UserPatch%Delay(1)",             [0x60, 0x00, 0x05, 0x00]),
-    Section("UserPatch%Delay(2)",             [0x60, 0x00, 0x05, 0x20]),
-    Section("UserPatch%Patch_1",              [0x60, 0x00, 0x05, 0x40]),
-    Section("UserPatch%Patch_2",              [0x60, 0x00, 0x06, 0x20]),
-    Section("UserPatch%Status",               [0x60, 0x00, 0x06, 0x50]),
-    Section("UserPatch%KnobAsgn",             [0x60, 0x00, 0x07, 0x00]),
-    Section("UserPatch%ExpPedalAsgn",         [0x60, 0x00, 0x08, 0x00]),
-    Section("UserPatch%ExpPedalAsgnMinMax",   [0x60, 0x00, 0x08, 0x30]),
-    Section("UserPatch%GafcExp1Asgn",         [0x60, 0x00, 0x09, 0x00]),
-    Section("UserPatch%GafcExp1AsgnMinMax",   [0x60, 0x00, 0x09, 0x30]),
-    Section("UserPatch%GafcExp2Asgn",         [0x60, 0x00, 0x0A, 0x00]),
-    Section("UserPatch%GafcExp2AsgnMinMax",   [0x60, 0x00, 0x0A, 0x30]),
-    Section("UserPatch%FsAsgn",               [0x60, 0x00, 0x0F, 0x08]),
-    Section("UserPatch%Patch_Mk2V2",          [0x60, 0x00, 0x0F, 0x10]),
-    Section("UserPatch%Contour(1)",           [0x60, 0x00, 0x0F, 0x30]),
-    Section("UserPatch%Contour(2)",           [0x60, 0x00, 0x0F, 0x38]),
-    Section("UserPatch%Contour(3)",           [0x60, 0x00, 0x0F, 0x40]),
-    Section("UserPatch%GafcExp3Asgn",         [0x60, 0x00, 0x0B, 0x00]),
-    Section("UserPatch%GafcExp3AsgnMinMax",   [0x60, 0x00, 0x0B, 0x30]),
-    Section("UserPatch%GafcExExp1Asgn",       [0x60, 0x00, 0x0C, 0x00]),
+    Section("UserPatch%PatchName", [0x60, 0x00, 0x00, 0x00]),
+    Section("UserPatch%Patch_0", [0x60, 0x00, 0x00, 0x10]),
+    Section("UserPatch%Fx(1)", [0x60, 0x00, 0x01, 0x00]),
+    Section("UserPatch%Fx(2)", [0x60, 0x00, 0x03, 0x00]),
+    Section("UserPatch%Delay(1)", [0x60, 0x00, 0x05, 0x00]),
+    Section("UserPatch%Delay(2)", [0x60, 0x00, 0x05, 0x20]),
+    Section("UserPatch%Patch_1", [0x60, 0x00, 0x05, 0x40]),
+    Section("UserPatch%Patch_2", [0x60, 0x00, 0x06, 0x20]),
+    Section("UserPatch%Status", [0x60, 0x00, 0x06, 0x50]),
+    Section("UserPatch%KnobAsgn", [0x60, 0x00, 0x07, 0x00]),
+    Section("UserPatch%ExpPedalAsgn", [0x60, 0x00, 0x08, 0x00]),
+    Section("UserPatch%ExpPedalAsgnMinMax", [0x60, 0x00, 0x08, 0x30]),
+    Section("UserPatch%GafcExp1Asgn", [0x60, 0x00, 0x09, 0x00]),
+    Section("UserPatch%GafcExp1AsgnMinMax", [0x60, 0x00, 0x09, 0x30]),
+    Section("UserPatch%GafcExp2Asgn", [0x60, 0x00, 0x0A, 0x00]),
+    Section("UserPatch%GafcExp2AsgnMinMax", [0x60, 0x00, 0x0A, 0x30]),
+    Section("UserPatch%FsAsgn", [0x60, 0x00, 0x0F, 0x08]),
+    Section("UserPatch%Patch_Mk2V2", [0x60, 0x00, 0x0F, 0x10]),
+    Section("UserPatch%Contour(1)", [0x60, 0x00, 0x0F, 0x30]),
+    Section("UserPatch%Contour(2)", [0x60, 0x00, 0x0F, 0x38]),
+    Section("UserPatch%Contour(3)", [0x60, 0x00, 0x0F, 0x40]),
+    Section("UserPatch%GafcExp3Asgn", [0x60, 0x00, 0x0B, 0x00]),
+    Section("UserPatch%GafcExp3AsgnMinMax", [0x60, 0x00, 0x0B, 0x30]),
+    Section("UserPatch%GafcExExp1Asgn", [0x60, 0x00, 0x0C, 0x00]),
     Section("UserPatch%GafcExExp1AsgnMinMax", [0x60, 0x00, 0x0C, 0x30]),
-    Section("UserPatch%GafcExExp2Asgn",       [0x60, 0x00, 0x0D, 0x00]),
+    Section("UserPatch%GafcExExp2Asgn", [0x60, 0x00, 0x0D, 0x00]),
     Section("UserPatch%GafcExExp2AsgnMinMax", [0x60, 0x00, 0x0D, 0x30]),
-    Section("UserPatch%GafcExExp3Asgn",       [0x60, 0x00, 0x0E, 0x00]),
+    Section("UserPatch%GafcExExp3Asgn", [0x60, 0x00, 0x0E, 0x00]),
     Section("UserPatch%GafcExExp3AsgnMinMax", [0x60, 0x00, 0x0E, 0x30]),
-    Section("UserPatch%CtrlAsgn",             [0x60, 0x00, 0x0F, 0x00]),
-    Section("UserPatch%Eq(2)",                [0x60, 0x00, 0x00, 0x60]),
+    Section("UserPatch%CtrlAsgn", [0x60, 0x00, 0x0F, 0x00]),
+    Section("UserPatch%Eq(2)", [0x60, 0x00, 0x00, 0x60]),
 ]
 
 
 # ---------------------------------------------------------------------------
 # KatanaMidi
 # ---------------------------------------------------------------------------
+
 
 class KatanaMidi:
     def __init__(self) -> None:
@@ -245,8 +244,8 @@ class KatanaMidi:
             # Send in MAX_CHUNK-byte chunks; each chunk gets its own offset address
             for chunk_start in range(0, len(data), MAX_CHUNK):
                 chunk = data[chunk_start : chunk_start + MAX_CHUNK]
-                addr  = _roland_addr_add(section.addr, chunk_start)
-                msg   = _build_dt1(addr, chunk)
+                addr = _roland_addr_add(section.addr, chunk_start)
+                msg = _build_dt1(addr, chunk)
                 if packets_sent == 0:
                     log.info("First SysEx packet: %s", " ".join(f"{b:02X}" for b in msg))
                 self._send_sysex(msg)

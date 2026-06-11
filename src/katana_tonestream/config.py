@@ -21,9 +21,11 @@ log = logging.getLogger(__name__)
 _KEYRING_SERVICE = "katana_tonestream"
 _KEYRING_USER_KEY = "toneexchange_username"
 _KEYRING_PASS_KEY = "toneexchange_password"
+_KEYRING_LLM_PREFIX = "katana_tonestream_llm_api_key"  # per-provider: "<prefix>:<provider>"
 
 try:
     import keyring as _keyring
+
     _KEYRING_OK = True
 except Exception:
     _KEYRING_OK = False
@@ -71,6 +73,7 @@ def midi_target_patch() -> int:
 
 # ── ToneExchange credentials (keyring) ───────────────────────────────────────
 
+
 def toneexchange_credentials() -> tuple[str, str]:
     """Return (username, password) from the OS keyring, or ('', '') if not set."""
     if not _KEYRING_OK:
@@ -107,3 +110,74 @@ def delete_toneexchange_credentials() -> None:
             _keyring.delete_password(_KEYRING_SERVICE, key)
         except Exception:
             pass
+
+
+# ── LLM API keys, one per provider (keyring) + default selection (config.ini) ─
+
+
+def _llm_key_name(provider: str) -> str:
+    return f"{_KEYRING_LLM_PREFIX}:{provider}"
+
+
+def llm_api_key(provider: str) -> str:
+    """Return the stored API key for a provider (e.g. 'openai'), or '' if not set."""
+    if not _KEYRING_OK or not provider:
+        return ""
+    try:
+        return _keyring.get_password(_KEYRING_SERVICE, _llm_key_name(provider)) or ""
+    except Exception:
+        log.warning("Failed to read LLM API key for %s from keyring", provider, exc_info=True)
+        return ""
+
+
+def set_llm_api_key(provider: str, key: str) -> bool:
+    """Save a provider's API key to the OS keyring. Returns True on success."""
+    if not _KEYRING_OK:
+        return False
+    try:
+        _keyring.set_password(_KEYRING_SERVICE, _llm_key_name(provider), key)
+        return True
+    except Exception:
+        log.warning("Failed to save LLM API key for %s to keyring", provider, exc_info=True)
+        return False
+
+
+def delete_llm_api_key(provider: str) -> None:
+    """Remove a provider's API key from the keyring."""
+    if not _KEYRING_OK:
+        return
+    try:
+        _keyring.delete_password(_KEYRING_SERVICE, _llm_key_name(provider))
+    except Exception:
+        pass
+
+
+def _set_ini_value(section: str, key: str, value: str) -> None:
+    """Write a single key into config.ini and reload."""
+    ini_path = paths.app_dir() / "config.ini"
+    paths.ensure_dirs()
+    parser = configparser.RawConfigParser()
+    if ini_path.exists():
+        parser.read(ini_path, encoding="utf-8")
+    if not parser.has_section(section):
+        parser.add_section(section)
+    parser.set(section, key, value)
+    with open(ini_path, "w", encoding="utf-8") as f:
+        parser.write(f)
+    reload()
+
+
+def default_llm_provider() -> str:
+    """Return the last-used LLM provider key, defaulting to 'openai'."""
+    return get("llm", "provider", fallback="openai")
+
+
+def default_llm_model() -> str:
+    """Return the last-used LLM model string (provider/model form), or ''."""
+    return get("llm", "model", fallback="")
+
+
+def set_default_llm(provider: str, model: str) -> None:
+    """Remember the provider+model last used for generation."""
+    _set_ini_value("llm", "provider", provider)
+    _set_ini_value("llm", "model", model)

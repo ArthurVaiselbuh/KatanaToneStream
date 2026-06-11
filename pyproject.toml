@@ -8,6 +8,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "python-rtmidi>=1.5",
     "keyring>=25.7.0",
+    "litellm>=1.40",
 ]
 
 [dependency-groups]

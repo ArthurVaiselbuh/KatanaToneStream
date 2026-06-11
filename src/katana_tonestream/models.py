@@ -1,22 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-# Amp type index → human label (Boss Katana Mk2)
-PREAMP_TYPES = {
-    0: "Natural", 1: "Boutique CLN", 2: "Crunch", 3: "HiGain",
-    4: "Lead", 5: "Brown", 6: "JC Clean", 7: "Mini Rect",
-    8: "Cali Cln", 9: "Cali Ld", 10: "Brit Nm", 11: "Brit Hi",
-    12: "Orng Cln", 13: "Orng Ld", 14: "BlackPnl", 15: "Tweed",
-}
-
-# OD/DS type index → label
-OD_TYPES = {
-    0: "OD-1", 1: "Blues OD", 2: "Warm OD", 3: "Natural OD",
-    4: "Crunch OD", 5: "Mid Boost", 6: "Fat DS", 7: "Hi-Gain DS",
-    8: "Metal DS", 9: "Stack DS", 10: "Lead DS", 11: "B-DRV",
-    12: "TS-style", 13: "SD-1", 14: "Boss BD-2", 15: "RAT",
-    16: "Fuzz", 17: "Custom",
-}
+from .katana_catalog import OD_TYPES, PREAMP_TYPES
 
 
 @dataclass
@@ -39,12 +24,26 @@ class KatanaPatch:
     patch_name: str
     preamp_type: int = 0
     preamp_gain: int = 0
+    bass: int = 64
+    mid: int = 64
+    treble: int = 64
+    presence: int = 50
     od_type: int = 0
     od_on: bool = False
+    od_drive: int = 50
+    od_level: int = 40
+    variation: int = 0  # amp green/red variation (Status[12]); see katana_catalog.KATANA_CHANNELS
+    fx1_on: bool = False
+    fx1_type: int = 0
+    fx2_on: bool = False
+    fx2_type: int = 0
     reverb_on: bool = False
     reverb_type: int = 0
+    reverb_level: int = 35
     delay_on: bool = False
-    raw_bytes: dict | None = None  # populated for ALB-sourced patches
+    delay_type: int = 0
+    delay_level: int = 50
+    raw_bytes: dict | None = None
 
     @property
     def preamp_label(self) -> str:

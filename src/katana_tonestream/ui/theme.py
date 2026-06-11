@@ -3,14 +3,14 @@
 import flet as ft
 
 # ── Palette ─────────────────────────────────────────────────────────────────
-AMBER       = "#F59E0B"
-AMBER_DARK  = "#B45309"
-CARD_BG     = "#1E1E2E"
+AMBER = "#F59E0B"
+AMBER_DARK = "#B45309"
+CARD_BG = "#1E1E2E"
 SURFACE_VAR = "#181825"
-BORDER_DIM  = "#2A2A3C"
-TEXT_DIM    = "#6B7280"
-PAGE_BG     = "#13131F"
-ART_SIZE    = 64
+BORDER_DIM = "#2A2A3C"
+TEXT_DIM = "#6B7280"
+PAGE_BG = "#13131F"
+ART_SIZE = 64
 
 _WHITE = "#FFFFFF"
 
@@ -71,11 +71,17 @@ def amber_button(
 
 
 _SOURCE_STYLE: dict[str, tuple[str, str]] = {
-    "toneexchange":  ("#1D4ED8", "#93C5FD"),
+    "toneexchange": ("#1D4ED8", "#93C5FD"),
     "guitarpatches": ("#6D28D9", "#C4B5FD"),
-    "local":         ("#0F766E", "#5EEAD4"),
+    "local": ("#0F766E", "#5EEAD4"),
+    "generated": ("#92400E", "#FCD34D"),
 }
-_SOURCE_LABEL = {"toneexchange": "ToneExchange", "guitarpatches": "GuitarPatches", "local": "Local"}
+_SOURCE_LABEL = {
+    "toneexchange": "ToneExchange",
+    "guitarpatches": "GuitarPatches",
+    "local": "Local",
+    "generated": "Generated",
+}
 
 
 def source_badge(source: str) -> ft.Container:

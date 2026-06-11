@@ -9,9 +9,11 @@ import logging
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 import flet as ft
 
+from ..address_map_parser import AddressMapError, load_and_validate
 from ..art_resolver import resolve_art
 from ..cache import delete_patch, get_art_path, get_cached_patches, save_art
 from ..config import midi_target_patch
@@ -20,6 +22,7 @@ from ..logging_setup import FletLogHandler
 from ..models import PatchMeta
 from ..service import PatchService
 from . import theme
+from .generate_dialog import GenerateDialog
 from .log_panel import LogPanel
 from .patch_card import PatchCard
 from .search_bar import SearchBar
@@ -28,6 +31,9 @@ from .slot_picker import SlotPicker
 
 log = logging.getLogger(__name__)
 
+_ASSETS = Path(__file__).resolve().parent.parent.parent.parent / "assets"
+_ICON = _ASSETS / "logo.ico"
+_ADDRESS_MAP = _ASSETS / "address_map.js"
 _MIDI_OK = "#22C55E"
 _MIDI_BAD = "#EF4444"
 
@@ -40,11 +46,14 @@ class AppShell:
         self._applying: set[str] = set()
         self._cards: dict[str, PatchCard] = {}
 
+        self._address_map_ok, self._address_map_error = self._check_address_map()
+
         cfg_patch = midi_target_patch()
         self.slot_picker = SlotPicker(page, initial=cfg_patch if cfg_patch >= 0 else None)
         self.log_panel = LogPanel(page, ui_log)
         self.settings_pane = SettingsPane(page, on_credentials_changed=self._on_credentials_changed)
-        self.search_bar = SearchBar(page, self._on_search)
+        self.generate_dialog = GenerateDialog(page, self.midi, on_save=self._on_generate_saved)
+        self.search_bar = SearchBar(page, self._on_search, on_generate=self._on_generate_clicked)
 
         self._build_page()
         self._start_threads()
@@ -71,9 +80,44 @@ class AppShell:
             card.refresh_apply_state()
         self.page.update()
 
+    @staticmethod
+    def _check_address_map() -> tuple[bool, str]:
+        try:
+            load_and_validate(_ADDRESS_MAP)
+            return True, ""
+        except AddressMapError as exc:
+            log.warning("Address map validation failed: %s", exc)
+            return False, str(exc)
+
+    # ── Generate ────────────────────────────────────────────────────────────
+    def _on_generate_clicked(self) -> None:
+        if not self._address_map_ok:
+            self.page.show_dialog(
+                ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("Address Map Missing"),
+                    content=ft.Text(
+                        f"Cannot generate patch: {self._address_map_error}",
+                        size=13,
+                    ),
+                    actions=[
+                        ft.TextButton("OK", on_click=lambda e: self.page.pop_dialog()),
+                    ],
+                    actions_alignment=ft.MainAxisAlignment.END,
+                    bgcolor=theme.SURFACE_VAR,
+                    shape=ft.RoundedRectangleBorder(radius=12),
+                )
+            )
+            return
+        self.generate_dialog.open()
+
     # ── Credentials changed ─────────────────────────────────────────────────
     def _on_credentials_changed(self) -> None:
         self.search_bar.refresh_chips()
+
+    # ── Generate saved ──────────────────────────────────────────────────────
+    def _on_generate_saved(self) -> None:
+        self.page.run_thread(self._do_search, "", "cached")
 
     # ── Cards ───────────────────────────────────────────────────────────────
     def _make_card(self, meta: PatchMeta) -> ft.Control:
@@ -96,16 +140,21 @@ class AppShell:
         self.page.run_thread(self._do_search, query, source_filter)
 
     def _do_search(self, query: str, source_filter: str) -> None:
-        self._status_text.value = f"Searching…  ·  {datetime.now().strftime('%H:%M:%S')}"
-        self.page.update()
-        results = self.service.search(query, source_filter)
-        self._render_results(results)
-        noun = "patch" if len(results) == 1 else "patches"
-        msg = f"Found {len(results)} {noun}" + (f" for '{query}'" if query else "")
-        if self.midi.is_connected():
-            self._status_text.value = f"{msg}  ·  {datetime.now().strftime('%H:%M:%S')}"
-        self.page.update()
-        self.page.run_thread(self._load_arts, results)
+        try:
+            self._status_text.value = f"Searching…  ·  {datetime.now().strftime('%H:%M:%S')}"
+            self.page.update()
+            results = self.service.search(query, source_filter)
+            log.debug("Search returned %d results, rendering…", len(results))
+            self._render_results(results)
+            log.debug("Render complete")
+            noun = "patch" if len(results) == 1 else "patches"
+            msg = f"Found {len(results)} {noun}" + (f" for '{query}'" if query else "")
+            if self.midi.is_connected():
+                self._status_text.value = f"{msg}  ·  {datetime.now().strftime('%H:%M:%S')}"
+            self.page.update()
+            self.page.run_thread(self._load_arts, results)
+        except Exception as ex:
+            log.exception(f"Search failed unexpectedly, {ex}")
 
     # ── Apply ───────────────────────────────────────────────────────────────
     def _apply(self, meta: PatchMeta) -> None:
@@ -203,6 +252,8 @@ class AppShell:
         page.window.height = 740
         page.window.min_width = 700
         page.window.min_height = 540
+        if _ICON.exists():
+            page.window.icon = str(_ICON)
 
         self._midi_dot = ft.Icon(ft.Icons.CIRCLE, size=9, color=_MIDI_BAD)
         self._midi_label = ft.Text("Disconnected", size=12, color=_MIDI_BAD)
@@ -255,8 +306,12 @@ class AppShell:
             ft.Column(
                 [
                     ft.Icon(ft.Icons.MUSIC_NOTE_OUTLINED, size=72, color="#374151"),
-                    ft.Text("Search for a song or patch above",
-                            color="#4B5563", size=14, text_align=ft.TextAlign.CENTER),
+                    ft.Text(
+                        "Search for a song or patch above",
+                        color="#4B5563",
+                        size=14,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=14,

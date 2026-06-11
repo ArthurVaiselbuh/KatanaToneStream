@@ -6,8 +6,12 @@ from katana_tonestream.models import PatchMeta
 
 def _meta(patch_id="p1", name="Hotel Solo", author="Eagles") -> PatchMeta:
     return PatchMeta(
-        id=patch_id, name=name, author=author,
-        source="toneexchange", rating=4.5, download_url="http://x",
+        id=patch_id,
+        name=name,
+        author=author,
+        source="toneexchange",
+        rating=4.5,
+        download_url="http://x",
     )
 
 

@@ -54,7 +54,7 @@ def load_index() -> dict[str, PatchMeta]:
         with open(index_file, encoding="utf-8") as f:
             raw: dict = json.load(f)
         return {k: _dict_to_meta(v) for k, v in raw.items()}
-    except (json.JSONDecodeError, KeyError):
+    except json.JSONDecodeError, KeyError:
         return {}
 
 
@@ -65,6 +65,7 @@ def _save_index(index: dict[str, PatchMeta]) -> None:
 
 
 # ── Patch files ───────────────────────────────────────────────────────────────
+
 
 def save_patch(meta: PatchMeta, raw_bytes: bytes) -> None:
     paths.ensure_dirs()
@@ -106,6 +107,7 @@ def get_cached_patches(query: str = "") -> list[PatchMeta]:
 
 # ── Album art ─────────────────────────────────────────────────────────────────
 
+
 def _art_path(patch_id: str) -> Path:
     return paths.art_dir() / f"{patch_id}.art"
 
@@ -130,6 +132,7 @@ def save_art(patch_id: str, data: bytes) -> None:
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────
+
 
 def delete_patch(patch_id: str) -> None:
     """Remove a patch and its art from the local cache and index."""

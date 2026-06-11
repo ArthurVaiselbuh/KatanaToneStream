@@ -10,10 +10,10 @@ from . import theme
 
 _MAX_ROWS = 300
 _LEVEL_OPTS = [
-    (logging.DEBUG,   "DEBUG", "#6B7280"),
-    (logging.INFO,    "INFO",  "#3B82F6"),
-    (logging.WARNING, "WARN",  "#F59E0B"),
-    (logging.ERROR,   "ERROR", "#EF4444"),
+    (logging.DEBUG, "DEBUG", "#6B7280"),
+    (logging.INFO, "INFO", "#3B82F6"),
+    (logging.WARNING, "WARN", "#F59E0B"),
+    (logging.ERROR, "ERROR", "#EF4444"),
 ]
 
 
@@ -41,7 +41,8 @@ class LogPanel:
         )
 
         self._list = ft.ListView(
-            auto_scroll=True, spacing=0,
+            auto_scroll=True,
+            spacing=0,
             padding=ft.Padding.symmetric(horizontal=4, vertical=4),
         )
         self._level_row = ft.Row(spacing=4)
@@ -56,13 +57,17 @@ class LogPanel:
                             ft.Text("Log", size=12, weight=ft.FontWeight.BOLD, color="#FFFFFF"),
                             ft.Container(self._level_row, expand=True),
                             ft.IconButton(
-                                ft.Icons.COPY_OUTLINED, icon_size=16,
-                                icon_color=theme.TEXT_DIM, tooltip="Copy all to clipboard",
+                                ft.Icons.COPY_OUTLINED,
+                                icon_size=16,
+                                icon_color=theme.TEXT_DIM,
+                                tooltip="Copy all to clipboard",
                                 on_click=lambda e: self._copy(),
                             ),
                             ft.IconButton(
-                                ft.Icons.DELETE_SWEEP_OUTLINED, icon_size=16,
-                                icon_color=theme.TEXT_DIM, tooltip="Clear log",
+                                ft.Icons.DELETE_SWEEP_OUTLINED,
+                                icon_size=16,
+                                icon_color=theme.TEXT_DIM,
+                                tooltip="Clear log",
                                 on_click=lambda e: self._clear(),
                             ),
                         ],
@@ -91,13 +96,23 @@ class LogPanel:
         return ft.Container(
             ft.Row(
                 [
-                    ft.Text(f"{ts} {record.levelname[0]}",
-                            size=10, color=col, width=80, font_family="Courier New",
-                            selectable=True),
-                    ft.Text(record.getMessage(),
-                            size=10, color="#C9D1D9", expand=True,
-                            no_wrap=False, font_family="Courier New",
-                            selectable=True),
+                    ft.Text(
+                        f"{ts} {record.levelname[0]}",
+                        size=10,
+                        color=col,
+                        width=80,
+                        font_family="Courier New",
+                        selectable=True,
+                    ),
+                    ft.Text(
+                        record.getMessage(),
+                        size=10,
+                        color="#C9D1D9",
+                        expand=True,
+                        no_wrap=False,
+                        font_family="Courier New",
+                        selectable=True,
+                    ),
                 ],
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.START,
@@ -120,8 +135,12 @@ class LogPanel:
                     active=self._level == lvl,
                     on_tap=lambda e, lv=lvl: self._set_level(lv),
                     color=col,
-                    size=10, padding_h=7, padding_v=2, radius=8,
-                    fill=False, animate=False,
+                    size=10,
+                    padding_h=7,
+                    padding_v=2,
+                    radius=8,
+                    fill=False,
+                    animate=False,
                 )
             )
 
@@ -133,9 +152,12 @@ class LogPanel:
 
     def _copy(self) -> None:
         lines = [
-            "%s [%s] %s: %s" % (
+            "%s [%s] %s: %s"
+            % (
                 datetime.fromtimestamp(r.created).strftime("%H:%M:%S"),
-                r.levelname, r.name, r.getMessage(),
+                r.levelname,
+                r.name,
+                r.getMessage(),
             )
             for r in self._ui_log.get_records(self._level)[-_MAX_ROWS:]
         ]

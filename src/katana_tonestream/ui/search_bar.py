@@ -16,9 +16,15 @@ _FILTERS = [
 
 
 class SearchBar:
-    def __init__(self, page: ft.Page, on_search: Callable[[str, str], None]) -> None:
+    def __init__(
+        self,
+        page: ft.Page,
+        on_search: Callable[[str, str], None],
+        on_generate: Callable[[], None] | None = None,
+    ) -> None:
         self._page = page
         self._on_search = on_search
+        self._on_generate = on_generate
         self.filter = "all"
 
         self._field = ft.TextField(
@@ -33,13 +39,18 @@ class SearchBar:
             border_color=theme.BORDER_DIM,
         )
         search_btn = theme.amber_button("Search", lambda e: self._trigger())
+        generate_btn = theme.amber_button(
+            "Generate",
+            lambda e: self._on_generate() if self._on_generate else None,
+            icon=ft.Icons.AUTO_AWESOME,
+        )
 
         self._filter_row = ft.Row(spacing=6, wrap=False)
         self._rebuild_chips()
 
         self.control = ft.Container(
             ft.Column(
-                [ft.Row([self._field, search_btn], spacing=10), self._filter_row],
+                [ft.Row([self._field, search_btn, generate_btn], spacing=10), self._filter_row],
                 spacing=10,
             ),
             padding=ft.Padding.symmetric(horizontal=16, vertical=14),
@@ -64,8 +75,12 @@ class SearchBar:
             if value == "toneexchange" and not self._has_te_credentials():
                 display = ft.Row(
                     [
-                        ft.Text(label, size=12, weight=ft.FontWeight.W_500,
-                                color="#FFFFFF" if self.filter == value else theme.TEXT_DIM),
+                        ft.Text(
+                            label,
+                            size=12,
+                            weight=ft.FontWeight.W_500,
+                            color="#FFFFFF" if self.filter == value else theme.TEXT_DIM,
+                        ),
                         ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=13, color="#F59E0B"),
                     ],
                     spacing=4,

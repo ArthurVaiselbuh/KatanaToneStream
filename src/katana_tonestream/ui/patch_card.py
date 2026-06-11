@@ -44,7 +44,7 @@ class PatchCard:
         )
         self._spinner_wrap = ft.Container(
             content=ft.ProgressRing(width=22, height=22, stroke_width=2, color=theme.AMBER),
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment(0, 0),
             expand=True,
             opacity=0,
         )
@@ -64,9 +64,12 @@ class PatchCard:
         )
         self._cached_pill = ft.Container(
             ft.Row(
-                [ft.Icon(ft.Icons.STAR_ROUNDED, size=11, color=theme.AMBER),
-                 ft.Text("cached", size=10, color=theme.AMBER)],
-                spacing=3, tight=True,
+                [
+                    ft.Icon(ft.Icons.STAR_ROUNDED, size=11, color=theme.AMBER),
+                    ft.Text("cached", size=10, color=theme.AMBER),
+                ],
+                spacing=3,
+                tight=True,
             ),
             padding=ft.Padding.symmetric(horizontal=6, vertical=2),
             border_radius=8,
@@ -77,7 +80,8 @@ class PatchCard:
         art_path = get_art_path(meta.id)
         self._art_slot = ft.Container(
             content=_art_image(art_path) if art_path else _art_placeholder(),
-            width=theme.ART_SIZE, height=theme.ART_SIZE,
+            width=theme.ART_SIZE,
+            height=theme.ART_SIZE,
             border_radius=8,
             bgcolor="#2A2A3C",
             alignment=ft.Alignment.CENTER,
@@ -87,16 +91,23 @@ class PatchCard:
         info_col = ft.Column(
             [
                 ft.Row(
-                    [ft.Text(meta.name or "Unnamed Patch",
-                             weight=ft.FontWeight.W_600, size=14, expand=True),
-                     self._cached_pill,
-                     self._remove_btn],
+                    [
+                        ft.Text(
+                            meta.name or "Unnamed Patch",
+                            weight=ft.FontWeight.W_600,
+                            size=14,
+                            expand=True,
+                        ),
+                        self._cached_pill,
+                        self._remove_btn,
+                    ],
                     spacing=4,
                 ),
                 ft.Text(meta.author or "Unknown author", size=11, color=theme.TEXT_DIM),
                 ft.Row([theme.source_badge(meta.source)], spacing=8),
             ],
-            expand=True, spacing=4,
+            expand=True,
+            spacing=4,
         )
         action_box = ft.Stack([self._apply_btn, self._spinner_wrap])
 

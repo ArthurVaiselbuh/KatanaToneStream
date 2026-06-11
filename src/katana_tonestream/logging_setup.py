@@ -29,6 +29,7 @@ _NOISY_LOGGERS = (
 
 class FletLogHandler(logging.Handler):
     """In-memory log handler — notifies registered Flet callbacks on each record."""
+
     MAX = 600
     # Records from these logger trees never reach the UI: emitting them would
     # trigger page.update(), which itself logs via flet_*, cascading into a freeze.
@@ -88,3 +89,30 @@ def setup_logging() -> FletLogHandler:
         logging.getLogger(name).setLevel(logging.WARNING)
 
     return ui_handler
+
+
+# litellm installs its own stderr StreamHandler and prints a provider banner. We
+# strip the handler (records already propagate to root → file + UI handlers) and
+# silence the banner so all LLM logging lands in the app's log window, not the console.
+_LITELLM_LOGGERS = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
+_litellm_tamed = False
+
+
+def tame_litellm_logging() -> None:
+    """Redirect litellm's console output into the app log handlers. Idempotent."""
+    global _litellm_tamed
+    if _litellm_tamed:
+        return
+    try:
+        import litellm
+
+        litellm.suppress_debug_info = True
+    except Exception:
+        return
+    for name in _LITELLM_LOGGERS:
+        lg = logging.getLogger(name)
+        for handler in list(lg.handlers):
+            lg.removeHandler(handler)
+        lg.propagate = True
+        lg.setLevel(logging.WARNING)
+    _litellm_tamed = True

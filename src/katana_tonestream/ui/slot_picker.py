@@ -22,15 +22,15 @@ class SlotPicker:
         self.control = ft.Container(
             content=ft.Row(
                 [ft.Icon(ft.Icons.PIANO, size=12, color=theme.AMBER), self._label],
-                spacing=4, tight=True,
+                spacing=4,
+                tight=True,
             ),
             padding=ft.Padding.symmetric(horizontal=8, vertical=5),
             border_radius=12,
             border=ft.Border.all(1, theme.AMBER_DARK),
             margin=ft.Margin.only(right=4),
             tooltip=(
-                "Target slot (click to change). "
-                "'TONE' = write to live buffer only, no slot switch."
+                "Target slot (click to change). 'TONE' = write to live buffer only, no slot switch."
             ),
             on_click=self._open,
         )
