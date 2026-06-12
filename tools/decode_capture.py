@@ -28,9 +28,14 @@ import sys
 
 # UMP packet size (in 32-bit words) by message type (top nibble of first byte).
 _UMP_WORDS = {
-    0x0: 1, 0x1: 1, 0x2: 1,   # utility / system / MIDI 1.0 channel voice
-    0x3: 2, 0x4: 2,           # data (SysEx7) / MIDI 2.0 channel voice
-    0x5: 4, 0xD: 4, 0xF: 4,   # data (SysEx8) / flex / stream
+    0x0: 1,
+    0x1: 1,
+    0x2: 1,  # utility / system / MIDI 1.0 channel voice
+    0x3: 2,
+    0x4: 2,  # data (SysEx7) / MIDI 2.0 channel voice
+    0x5: 4,
+    0xD: 4,
+    0xF: 4,  # data (SysEx8) / flex / stream
 }
 
 ROLAND = 0x41
@@ -85,14 +90,14 @@ def reassemble_sysex(words: list[int]) -> list[list[int]]:
         for w in chunk[1:]:
             data += words_to_bytes(w)
         data = data[:count]
-        if status == 0x0:        # complete in one packet
+        if status == 0x0:  # complete in one packet
             messages.append(data)
             current = []
-        elif status == 0x1:      # start
+        elif status == 0x1:  # start
             current = list(data)
-        elif status == 0x2:      # continue
+        elif status == 0x2:  # continue
             current += data
-        elif status == 0x3:      # end
+        elif status == 0x3:  # end
             current += data
             messages.append(current)
             current = []
@@ -116,7 +121,7 @@ def decode_roland(sysex: list[int]) -> dict | None:
     if model != KATANA_MODEL:
         return {"kind": "non-katana", "dev": dev, "model": model, "raw": sysex}
     cmd = sysex[6]
-    body = sysex[7:-1]          # address + data
+    body = sysex[7:-1]  # address + data
     chk = sysex[-1]
     addr = body[:4]
     data = body[4:]
@@ -140,7 +145,10 @@ def main() -> int:
     ap.add_argument("capture", help="path to .midi2 capture file")
     ap.add_argument("--dt1-only", action="store_true", help="show only DT1 (write) frames")
     ap.add_argument("--rq1-only", action="store_true", help="show only RQ1 (read) frames")
-    ap.add_argument("--grep", help="only show frames whose address hex starts with this (e.g. 60 or 10000000)")
+    ap.add_argument(
+        "--grep",
+        help="only show frames whose address hex starts with this (e.g. 60 or 10000000)",
+    )
     args = ap.parse_args()
 
     words = read_words(args.capture)
@@ -164,8 +172,10 @@ def main() -> int:
             continue
         cmd_name = CMD_NAMES.get(d["cmd"], f"cmd 0x{d['cmd']:02X}")
         flag = "" if d["chk_ok"] else "  !! BAD CHECKSUM"
-        print(f"[{idx:4}] {cmd_name:12} dev=0x{d['dev']:02X} addr={fmt(d['addr'])}  "
-              f"len={len(d['data']):3}{flag}")
+        print(
+            f"[{idx:4}] {cmd_name:12} dev=0x{d['dev']:02X} addr={fmt(d['addr'])}  "
+            f"len={len(d['data']):3}{flag}"
+        )
         if d["data"]:
             print(f"        data: {fmt(d['data'])}")
             print(f"        ascii: {ascii_render(d['data'])}")

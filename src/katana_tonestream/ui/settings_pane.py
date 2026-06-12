@@ -20,24 +20,9 @@ class SettingsPane:
         self._on_changed = on_credentials_changed
 
         # ── ToneExchange ──────────────────────────────────────────────────────
-        self._username = ft.TextField(
-            label="ToneExchange username",
-            hint_text="your@email.com",
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
-        self._password = ft.TextField(
-            label="ToneExchange password",
-            password=True,
-            can_reveal_password=True,
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
+        self._username = theme.text_field("ToneExchange username", hint_text="your@email.com")
+        self._password = theme.text_field(
+            "ToneExchange password", password=True, can_reveal_password=True
         )
         self._te_status = ft.Text("", size=12, color=theme.AMBER)
 
@@ -66,15 +51,8 @@ class SettingsPane:
         for label, key in PROVIDERS:
             if key == "ollama":
                 continue
-            self._llm_key_fields[key] = ft.TextField(
-                label=f"{label} API key",
-                password=True,
-                can_reveal_password=True,
-                border_radius=8,
-                focused_border_color=theme.AMBER,
-                bgcolor=theme.CARD_BG,
-                border_color=theme.BORDER_DIM,
-                text_size=13,
+            self._llm_key_fields[key] = theme.text_field(
+                f"{label} API key", password=True, can_reveal_password=True
             )
         self._llm_status = ft.Text("", size=12, color=theme.AMBER)
 

@@ -75,27 +75,32 @@ def find_endpoint(port_keyword: str) -> str:
         candidate = "".join(parts)
         # The keyword may appear in the endpoint ID itself (e.g. --port ksa)
         # OR in the display-name tokens that precede the path in the table row.
-        context = " ".join(tokens[max(0, i - 15):i])
+        context = " ".join(tokens[max(0, i - 15) : i])
         if port_keyword.lower() in candidate.lower() or port_keyword.lower() in context.lower():
             return candidate
 
     detected = [t for t in tokens if t.lower().startswith(path_prefix.lower())]
     hint = f"\nDetected path starts: {detected}" if detected else "\nNo swd#midisrv paths found."
     raise RuntimeError(
-        f"No endpoint matching '{port_keyword}' found.{hint}\n"
-        "Is the amp connected and powered on?"
+        f"No endpoint matching '{port_keyword}' found.{hint}\nIs the amp connected and powered on?"
     )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--label", default="capture",
-                    help="Prefix for the auto-generated filename (default: capture)")
-    ap.add_argument("--output", "-o", default=None,
-                    help="Explicit output path (overrides --label + timestamp)")
-    ap.add_argument("--port", default="KATANA",
-                    help="Keyword to match in the endpoint ID (default: KATANA)")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--label",
+        default="capture",
+        help="Prefix for the auto-generated filename (default: capture)",
+    )
+    ap.add_argument(
+        "--output", "-o", default=None, help="Explicit output path (overrides --label + timestamp)"
+    )
+    ap.add_argument(
+        "--port", default="KATANA", help="Keyword to match in the endpoint ID (default: KATANA)"
+    )
     args = ap.parse_args()
 
     print("Searching for MIDI endpoint…")
@@ -120,8 +125,12 @@ def main() -> None:
     # Run with inherited stdin/stdout so the user can interact (ESC to stop).
     subprocess.run(
         [
-            MIDI_EXE, "endpoint", endpoint_id, "monitor",
-            "--capture-to-file", str(out),
+            MIDI_EXE,
+            "endpoint",
+            endpoint_id,
+            "monitor",
+            "--capture-to-file",
+            str(out),
             "--annotate-capture",
             "--include-timestamp",
             "--verbose",

@@ -25,7 +25,13 @@ uv run pytest                # run all tests
 uv run pytest tests/test_midi.py::TestRolandChecksum::test_simple   # single test
 uv run ruff check            # lint (rules: E, F, I; line-length 100)
 uv run ruff format           # format
+uv run pre-commit run --all-files   # ruff lint + format via .pre-commit-config.yaml
 ```
+
+`.pre-commit-config.yaml` defines ruff lint + format hooks that shell out to the
+project's own ruff (`uv run ruff …`). It is **not** installed as a git hook — run
+it manually with `uv run pre-commit run` (staged files) or `--all-files`. Do not
+run `pre-commit install`.
 
 Tests configure `pythonpath=["src"]` via `pyproject.toml`, so imports use the
 installed package name `katana_tonestream`. Some tests (`sample_tsl_path`,
@@ -58,15 +64,18 @@ Strict layering, UI-free core so the flow is testable without Flet or a real amp
 - **`config.py`** — `config.ini` (RawConfigParser) from app dir or CWD.
   Placeholder credential values are treated as absent. `_cfg` is module-level;
   call `config.reload()` after changing the app dir (the `app_home` fixture does).
-  LLM API key is stored in keyring (`llm_api_key`); LLM provider key in `[llm] provider`
-  and model string in `[llm] model`.
-- **`llm_providers.py`** — `PROVIDERS` (curated provider list) and
-  `list_models(provider, api_key) -> list[str]`. Wraps litellm's
+  **LLM API keys are stored one-per-provider in keyring** as `llm_api_key:<provider>`
+  (`llm_api_key(provider)` / `set_llm_api_key(provider, key)` / `delete_llm_api_key(provider)`).
+  The last-used provider+model is remembered in `[llm] provider` / `[llm] model` via
+  `default_llm_provider()` / `default_llm_model()` / `set_default_llm(provider, model)`.
+- **`llm_providers.py`** — `PROVIDERS` (curated provider list), `configured_providers()`
+  (those with a stored key; Ollama is local so always listed), and
+  `list_models(provider, api_key) -> list[str]`. The latter wraps litellm's
   `get_valid_models(check_provider_endpoint=True, …)` to query the provider's real
-  `/models` endpoint, then normalises to `provider/model` form and filters out
-  non-chat models (embeddings/media). Non-blocking — returns `[]` on bad key/offline.
-  The settings pane uses this to populate the Model dropdown so model names can't
-  go stale or be mistyped.
+  `/models` endpoint, normalises to `provider/model` form, and filters out non-chat
+  models (embeddings/media). Non-blocking — returns `[]` on bad key/offline. The
+  **Settings pane** holds one API-key field per provider; the **Generate dialog**
+  picks a configured provider + one of its fetched models per generation.
 - **`katana_catalog.py`** — pure data module with all human-readable type enumerations:
   `PREAMP_TYPES`, `OD_TYPES`, `FX_TYPES`, `DELAY_TYPES`, `REVERB_TYPES`. Sourced from
   `assets/address_map.js` analysis and Boss Katana Mk2 documentation.

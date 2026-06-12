@@ -154,9 +154,12 @@ def _short(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _call(client, messages: list[dict]) -> dict:
+def _call(client, prompt: str) -> dict:
     response = client.completion(
-        messages=messages,
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
         temperature=0.3,
     )
     raw = (response.choices[0].message.content or "").strip()
@@ -200,13 +203,7 @@ def _clamp(val, lo: int, hi: int, key: str) -> int:
 
 def _phase_character(artist: str, song: str, extra: str, client) -> dict:
     prompt = _PROMPT_CHARACTER.format(artist=artist, song=song, extra_block=_extra_block(extra))
-    data = _call(
-        client,
-        [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-    )
+    data = _call(client, prompt)
     for key in ("booster_on", "fx_on", "delay_on", "reverb_on", "overall_character", "key_traits"):
         if key not in data:
             raise ValueError(f"Character phase missing field '{key}'")
@@ -224,13 +221,7 @@ def _phase_types(character: dict, extra: str, client) -> dict:
         delay_options=_catalog_str(DELAY_TYPES),
         reverb_options=_catalog_str(REVERB_TYPES),
     )
-    data = _call(
-        client,
-        [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-    )
+    data = _call(client, prompt)
     for key in ("preamp_type", "od_type", "fx1_type", "fx2_type", "delay_type", "reverb_type"):
         if key not in data:
             raise ValueError(f"Types phase missing field '{key}'")
@@ -256,13 +247,7 @@ def _phase_values(artist: str, song: str, types: dict, extra: str, client) -> di
         delay_name=DELAY_TYPES.get(types["delay_type"], str(types["delay_type"])),
         reverb_name=REVERB_TYPES.get(types["reverb_type"], str(types["reverb_type"])),
     )
-    data = _call(
-        client,
-        [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-    )
+    data = _call(client, prompt)
     required = (
         "preamp_gain",
         "bass",

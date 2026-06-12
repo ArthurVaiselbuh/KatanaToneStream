@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from katana_tonestream.cache import load_index, save_patch
+from katana_tonestream.cache import save_patch
 from katana_tonestream.models import PatchMeta
 
 ALB_PATH = Path("prerequisites/BossKatanaII/KATANA MkII_backup_170523.alb")
@@ -29,8 +29,15 @@ def _name_bytes(name: str) -> list[str]:
     return [f"{ord(c):02X}" for c in padded]
 
 
-def _make(template: dict, name: str, preamp_type: int, gain: int,
-          fx1_on: bool, delay_on: bool, reverb_on: bool) -> dict:
+def _make(
+    template: dict,
+    name: str,
+    preamp_type: int,
+    gain: int,
+    fx1_on: bool,
+    delay_on: bool,
+    reverb_on: bool,
+) -> dict:
     p = copy.deepcopy(template)
 
     p["UserPatch%PatchName"] = _name_bytes(name)
@@ -45,8 +52,8 @@ def _make(template: dict, name: str, preamp_type: int, gain: int,
         if not fx1_on:
             b[5] = "3C"
         else:
-            b[3] = "50"   # bass
-            b[5] = "50"   # treble
+            b[3] = "50"  # bass
+            b[5] = "50"  # treble
         p["UserPatch%Patch_0"] = b
 
     # FX1 on/off (byte 0)
@@ -88,12 +95,14 @@ def save(patch_dict: dict, display_name: str, desc: str) -> None:
         rating=0.0,
         download_url="",
     )
-    alb_json = json.dumps({
-        "formatRev": "0002",
-        "device": "KATANA MkII",
-        "model": "KATANA-100MkII",
-        "userPatch": [patch_dict],
-    }).encode()
+    alb_json = json.dumps(
+        {
+            "formatRev": "0002",
+            "device": "KATANA MkII",
+            "model": "KATANA-100MkII",
+            "userPatch": [patch_dict],
+        }
+    ).encode()
     save_patch(meta, alb_json)
     print(f"  Saved  {display_name!r}  id={pid}  ({desc})")
 
@@ -103,25 +112,29 @@ def main() -> None:
         alb = json.load(f)
     template = alb["userPatch"][0]
 
-    clean = _make(template,
-                  name="TST_CLEAN",
-                  preamp_type=6,   # JC Clean
-                  gain=0,
-                  fx1_on=False,
-                  delay_on=False,
-                  reverb_on=False)
+    clean = _make(
+        template,
+        name="TST_CLEAN",
+        preamp_type=6,  # JC Clean
+        gain=0,
+        fx1_on=False,
+        delay_on=False,
+        reverb_on=False,
+    )
 
-    od = _make(template,
-               name="TST_OD",
-               preamp_type=4,   # Lead
-               gain=0x64,       # 100 = max
-               fx1_on=True,
-               delay_on=False,
-               reverb_on=False)
+    od = _make(
+        template,
+        name="TST_OD",
+        preamp_type=4,  # Lead
+        gain=0x64,  # 100 = max
+        fx1_on=True,
+        delay_on=False,
+        reverb_on=False,
+    )
 
     print("Seeding test patches …")
     save(clean, "TST_CLEAN", "JC Clean, gain=0, all FX off")
-    save(od,    "TST_OD",    "Lead, gain=100 (max), FX on")
+    save(od, "TST_OD", "Lead, gain=100 (max), FX on")
     print("Done. Restart the app and click 'Cached' to see them.")
 
 

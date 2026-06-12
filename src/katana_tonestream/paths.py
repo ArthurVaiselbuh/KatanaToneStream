@@ -25,10 +25,6 @@ def art_dir() -> Path:
     return app_dir() / "art"
 
 
-def log_dir() -> Path:
-    return app_dir()
-
-
 def index_file() -> Path:
     return app_dir() / "index.json"
 

@@ -253,14 +253,3 @@ def parse_alb(source: str | bytes | Path) -> list[KatanaPatch]:
         patches.append(patch)
 
     return patches
-
-
-def parse_file(path: str | Path) -> list[KatanaPatch]:
-    """Auto-detect format from extension and parse."""
-    path = Path(path)
-    suffix = path.suffix.lower()
-    if suffix == ".tsl":
-        return parse_tsl(path)
-    if suffix == ".alb":
-        return parse_alb(path)
-    raise ValueError(f"Unsupported file type: {suffix}")

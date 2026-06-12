@@ -8,10 +8,6 @@ from . import paths
 from .models import PatchMeta
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _meta_to_dict(meta: PatchMeta) -> dict:
     return {
         "id": meta.id,
@@ -112,18 +108,9 @@ def _art_path(patch_id: str) -> Path:
     return paths.art_dir() / f"{patch_id}.art"
 
 
-def is_art_cached(patch_id: str) -> bool:
-    return _art_path(patch_id).exists()
-
-
 def get_art_path(patch_id: str) -> Path | None:
     p = _art_path(patch_id)
     return p if p.exists() else None
-
-
-def get_art_bytes(patch_id: str) -> bytes | None:
-    p = _art_path(patch_id)
-    return p.read_bytes() if p.exists() else None
 
 
 def save_art(patch_id: str, data: bytes) -> None:

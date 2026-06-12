@@ -69,8 +69,23 @@ def main() -> int:
             chunk = data[start : start + MAX_CHUNK]
             rebuilt.append(_build_dt1(_roland_addr_add(section.addr, start), chunk))
 
-    captured = [[0xF0, 0x41, d["dev"], 0x00, 0x00, 0x00, 0x33, d["cmd"], *d["addr"],
-                 *d["data"], d["chk"], 0xF7] for d in frames]
+    captured = [
+        [
+            0xF0,
+            0x41,
+            d["dev"],
+            0x00,
+            0x00,
+            0x00,
+            0x33,
+            d["cmd"],
+            *d["addr"],
+            *d["data"],
+            d["chk"],
+            0xF7,
+        ]
+        for d in frames
+    ]
 
     print(f"DEVICE_ID=0x{DEVICE_ID:02X}  MAX_CHUNK={MAX_CHUNK}")
     print(f"captured live-buffer frames: {len(captured)}   rebuilt frames: {len(rebuilt)}")

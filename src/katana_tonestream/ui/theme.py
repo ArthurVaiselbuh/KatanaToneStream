@@ -47,6 +47,34 @@ def chip(
     return ft.GestureDetector(container, on_tap=on_tap)
 
 
+def dropdown(label: str, options=None, value=None, **kwargs) -> ft.Dropdown:
+    """A Dropdown with the shared dark/amber styling. Extra kwargs pass through."""
+    return ft.Dropdown(
+        label=label,
+        options=options or [],
+        value=value,
+        border_radius=8,
+        focused_border_color=AMBER,
+        bgcolor=CARD_BG,
+        border_color=BORDER_DIM,
+        text_size=13,
+        **kwargs,
+    )
+
+
+def text_field(label: str | None = None, **kwargs) -> ft.TextField:
+    """A TextField with the shared dark/amber styling. Extra kwargs override defaults."""
+    style = dict(
+        border_radius=8,
+        focused_border_color=AMBER,
+        bgcolor=CARD_BG,
+        border_color=BORDER_DIM,
+        text_size=13,
+    )
+    style.update(kwargs)
+    return ft.TextField(label=label, **style)
+
+
 def amber_button(
     text: str,
     on_click,

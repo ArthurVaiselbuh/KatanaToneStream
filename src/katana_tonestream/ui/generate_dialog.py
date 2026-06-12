@@ -31,15 +31,12 @@ def _dropdown_options(mapping: dict) -> list[ft.dropdown.Option]:
 def _slider_row(label: str, lo: int, hi: int) -> tuple[ft.Slider, ft.TextField, ft.Row]:
     """Returns (slider, textfield, row_control) with bidirectional sync."""
     mid = (lo + hi) // 2
-    field = ft.TextField(
+    field = theme.text_field(
         value=str(mid),
         width=56,
         text_align=ft.TextAlign.CENTER,
         border_radius=6,
         text_size=12,
-        bgcolor=theme.CARD_BG,
-        border_color=theme.BORDER_DIM,
-        focused_border_color=theme.AMBER,
         content_padding=ft.Padding.symmetric(horizontal=6, vertical=8),
     )
     slider = ft.Slider(
@@ -93,71 +90,22 @@ class GenerateDialog:
         self._models_cache: dict[str, list[str]] = {}
 
         # ── LLM engine pickers ────────────────────────────────────────────────
-        self._provider_dd = ft.Dropdown(
-            label="LLM provider",
-            options=[],
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-            on_select=self._on_provider_change,
-        )
-        self._model_dd = ft.Dropdown(
-            label="Model",
-            options=[],
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
+        self._provider_dd = theme.dropdown("LLM provider", on_select=self._on_provider_change)
+        self._model_dd = theme.dropdown("Model")
 
         # ── Input fields ──────────────────────────────────────────────────────
-        self._artist = ft.TextField(
-            label="Artist",
-            hint_text="e.g. Steve Vai",
-            expand=True,
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
-        self._song = ft.TextField(
-            label="Song",
-            hint_text="e.g. For the Love of God",
-            expand=True,
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
-        self._notes = ft.TextField(
-            label="Additional requests (optional)",
+        self._artist = theme.text_field("Artist", hint_text="e.g. Steve Vai", expand=True)
+        self._song = theme.text_field("Song", hint_text="e.g. For the Love of God", expand=True)
+        self._notes = theme.text_field(
+            "Additional requests (optional)",
             hint_text="e.g. brighter, less gain, add a slapback delay",
             multiline=True,
             min_lines=1,
             max_lines=3,
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
         )
 
         # ── Amp section ───────────────────────────────────────────────────────
-        self._preamp_type = ft.Dropdown(
-            label="Preamp type",
-            options=_dropdown_options(PREAMP_TYPES),
-            value="0",
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
+        self._preamp_type = theme.dropdown("Preamp type", _dropdown_options(PREAMP_TYPES), "0")
         self._gain_slider, self._gain_field, gain_row = _slider_row("Gain", 0, 120)
         self._bass_slider, self._bass_field, bass_row = _slider_row("Bass", 0, 100)
         self._mid_slider, self._mid_field, mid_row = _slider_row("Mid", 0, 100)
@@ -165,71 +113,26 @@ class GenerateDialog:
         self._presence_slider, self._presence_field, presence_row = _slider_row("Presence", 0, 100)
 
         # ── OD/DS section ─────────────────────────────────────────────────────
-        self._od_type = ft.Dropdown(
-            label="OD/DS type",
-            options=_dropdown_options(OD_TYPES),
-            value="0",
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
+        self._od_type = theme.dropdown("OD/DS type", _dropdown_options(OD_TYPES), "0")
         self._od_on = ft.Switch(label="OD/DS on", active_color=theme.AMBER, value=False)
         self._od_drive_slider, self._od_drive_field, od_drive_row = _slider_row("Drive", 0, 120)
         self._od_level_slider, self._od_level_field, od_level_row = _slider_row("Level", 0, 100)
 
         # ── FX section ────────────────────────────────────────────────────────
-        self._fx1_type = ft.Dropdown(
-            label="FX1 type",
-            options=_dropdown_options(FX_TYPES),
-            value="0",
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
+        self._fx1_type = theme.dropdown("FX1 type", _dropdown_options(FX_TYPES), "0")
         self._fx1_on = ft.Switch(label="FX1 on", active_color=theme.AMBER, value=False)
-        self._fx2_type = ft.Dropdown(
-            label="FX2 type",
-            options=_dropdown_options(FX_TYPES),
-            value="0",
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
+        self._fx2_type = theme.dropdown("FX2 type", _dropdown_options(FX_TYPES), "0")
         self._fx2_on = ft.Switch(label="FX2 on", active_color=theme.AMBER, value=False)
 
         # ── Delay section ─────────────────────────────────────────────────────
-        self._delay_type = ft.Dropdown(
-            label="Delay type",
-            options=_dropdown_options(DELAY_TYPES),
-            value="0",
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
+        self._delay_type = theme.dropdown("Delay type", _dropdown_options(DELAY_TYPES), "0")
         self._delay_on = ft.Switch(label="Delay on", active_color=theme.AMBER, value=False)
         self._delay_level_slider, self._delay_level_field, delay_level_row = _slider_row(
             "Level", 0, 120
         )
 
         # ── Reverb section ────────────────────────────────────────────────────
-        self._reverb_type = ft.Dropdown(
-            label="Reverb type",
-            options=_dropdown_options(REVERB_TYPES),
-            value="0",
-            border_radius=8,
-            focused_border_color=theme.AMBER,
-            bgcolor=theme.CARD_BG,
-            border_color=theme.BORDER_DIM,
-            text_size=13,
-        )
+        self._reverb_type = theme.dropdown("Reverb type", _dropdown_options(REVERB_TYPES), "0")
         self._reverb_on = ft.Switch(label="Reverb on", active_color=theme.AMBER, value=False)
         self._reverb_level_slider, self._reverb_level_field, reverb_level_row = _slider_row(
             "Level", 0, 100
@@ -500,6 +403,7 @@ class GenerateDialog:
                 "No base template available. Reinstall or download a patch first.", error=True
             )
             return None
+        # _current_params() keys match KatanaPatch field names, so spread them directly.
         p = self._current_params()
         meta = PatchMeta(
             id=f"gen_{int(datetime.now(timezone.utc).timestamp())}",
@@ -509,64 +413,15 @@ class GenerateDialog:
             rating=0.0,
             download_url="",
         )
-        seed = KatanaPatch(
+        patch = KatanaPatch(
             meta=meta,
             raw_params=p,
             patch_name=name,
-            preamp_type=p["preamp_type"],
-            preamp_gain=p["preamp_gain"],
-            bass=p["bass"],
-            mid=p["mid"],
-            treble=p["treble"],
-            presence=p["presence"],
-            od_type=p["od_type"],
-            od_on=p["od_on"],
-            od_drive=p["od_drive"],
-            od_level=p["od_level"],
             variation=variation_for_preamp(p["preamp_type"]),
-            fx1_type=p["fx1_type"],
-            fx1_on=p["fx1_on"],
-            fx2_type=p["fx2_type"],
-            fx2_on=p["fx2_on"],
-            delay_type=p["delay_type"],
-            delay_on=p["delay_on"],
-            delay_level=p["delay_level"],
-            reverb_type=p["reverb_type"],
-            reverb_on=p["reverb_on"],
-            reverb_level=p["reverb_level"],
+            **p,
         )
-        return KatanaPatch(
-            meta=meta,
-            raw_params=p,
-            patch_name=name,
-            **{
-                k: getattr(seed, k)
-                for k in (
-                    "preamp_type",
-                    "preamp_gain",
-                    "bass",
-                    "mid",
-                    "treble",
-                    "presence",
-                    "od_type",
-                    "od_on",
-                    "od_drive",
-                    "od_level",
-                    "variation",
-                    "fx1_type",
-                    "fx1_on",
-                    "fx2_type",
-                    "fx2_on",
-                    "delay_type",
-                    "delay_on",
-                    "delay_level",
-                    "reverb_type",
-                    "reverb_on",
-                    "reverb_level",
-                )
-            },
-            raw_bytes=build_raw_bytes(seed, template),
-        )
+        patch.raw_bytes = build_raw_bytes(patch, template)
+        return patch
 
     # ── Event handlers ────────────────────────────────────────────────────────
 

@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from .katana_catalog import OD_TYPES, PREAMP_TYPES
-
 
 @dataclass
 class PatchMeta:
@@ -44,14 +42,6 @@ class KatanaPatch:
     delay_type: int = 0
     delay_level: int = 50
     raw_bytes: dict | None = None
-
-    @property
-    def preamp_label(self) -> str:
-        return PREAMP_TYPES.get(self.preamp_type, f"Type {self.preamp_type}")
-
-    @property
-    def od_label(self) -> str:
-        return OD_TYPES.get(self.od_type, f"OD {self.od_type}")
 
     @property
     def display_name(self) -> str:

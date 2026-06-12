@@ -51,9 +51,6 @@ class PatchService:
 
         return results
 
-    def load_cached(self, query: str = "") -> list[PatchMeta]:
-        return cache.get_cached_patches(query)
-
     # ── Apply ───────────────────────────────────────────────────────────────
     def apply(
         self,

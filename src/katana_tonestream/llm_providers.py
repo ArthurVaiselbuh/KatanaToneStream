@@ -23,12 +23,6 @@ PROVIDERS: list[tuple[str, str]] = [
     ("Ollama (local)", "ollama"),
 ]
 
-_PROVIDER_LABELS = dict((key, label) for label, key in PROVIDERS)
-
-
-def provider_label(provider: str) -> str:
-    return _PROVIDER_LABELS.get(provider, provider)
-
 
 def configured_providers() -> list[tuple[str, str]]:
     """Return (label, provider_key) for every provider that has an API key stored.
