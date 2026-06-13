@@ -322,13 +322,21 @@ def generate_patch(
 
     log.info("Generating patch for '%s' by '%s' via %s", song, artist, effective_model)
 
+    # Local Ollama models are more prone to wrapping JSON in prose; force its
+    # native JSON mode. Cloud providers already follow the "JSON only" system
+    # prompt, so this stays gated on ollama to avoid providers that reject it.
+    provider = effective_model.split("/", 1)[0] if "/" in effective_model else ""
+    json_mode = provider in ("ollama", "ollama_chat")
+
     class _Client:
         def completion(self, messages, temperature):
+            extra_kwargs = {"format": "json"} if json_mode else {}
             return litellm.completion(
                 model=effective_model,
                 api_key=api_key or None,
                 messages=messages,
                 temperature=temperature,
+                **extra_kwargs,
             )
 
     client = _Client()

@@ -1,0 +1,23 @@
+# Pre-commit configuration: ruff lint + format.
+#
+# These hooks are NOT installed as a real git pre-commit hook. Run them manually:
+#   uv run pre-commit run --all-files   # lint + format the whole tree
+#   uv run pre-commit run               # only files staged for commit
+#
+# Hooks call the project's own ruff through `uv run`, so behaviour matches
+# `uv run ruff check` / `uv run ruff format` exactly (same version from uv.lock).
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff lint
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
