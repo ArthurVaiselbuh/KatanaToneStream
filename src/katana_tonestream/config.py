@@ -153,12 +153,14 @@ def default_llm_provider() -> str:
     return get("llm", "provider", fallback="openai")
 
 
-def default_llm_model() -> str:
-    """Return the last-used LLM model string (provider/model form), or ''."""
-    return get("llm", "model", fallback="")
+def default_llm_model(provider: str) -> str:
+    """Return the last-used model (provider/model form) for a provider, or ''."""
+    if not provider:
+        return ""
+    return get("llm", f"model.{provider}", fallback="")
 
 
 def set_default_llm(provider: str, model: str) -> None:
-    """Remember the provider+model last used for generation."""
+    """Remember the default provider and the last-used model for that provider."""
     _set_ini_value("llm", "provider", provider)
-    _set_ini_value("llm", "model", model)
+    _set_ini_value("llm", f"model.{provider}", model)

@@ -91,7 +91,14 @@ class GenerateDialog:
 
         # ── LLM engine pickers ────────────────────────────────────────────────
         self._provider_dd = theme.dropdown("LLM provider", on_select=self._on_provider_change)
-        self._model_dd = theme.dropdown("Model")
+        # Editable + enable_filter turns this into a type-to-search box: typing a
+        # substring (e.g. "flash") filters the menu case-insensitively.
+        self._model_dd = theme.dropdown(
+            "Model",
+            editable=True,
+            enable_filter=True,
+            hint_text="Type to filter, e.g. flash",
+        )
 
         # ── Input fields ──────────────────────────────────────────────────────
         self._artist = theme.text_field("Artist", hint_text="e.g. Steve Vai", expand=True)
@@ -315,10 +322,12 @@ class GenerateDialog:
                     models = []
                 self._models_cache[provider] = models
             self._model_dd.options = [ft.dropdown.Option(key=m, text=m) for m in models]
-            default_m = config.default_llm_model()
-            self._model_dd.value = (
-                default_m if default_m in models else (models[0] if models else None)
-            )
+            default_m = config.default_llm_model(provider)
+            selected = default_m if default_m in models else (models[0] if models else None)
+            self._model_dd.value = selected
+            # Editable dropdown shows .text in its field; keep it in sync with .value
+            # (option key == text == model string here) so the default is visible.
+            self._model_dd.text = selected or ""
             if models:
                 self._set_status("")
             else:

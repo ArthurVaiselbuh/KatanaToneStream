@@ -172,7 +172,7 @@ def _bte_login() -> str:
     if not username or not password:
         raise RuntimeError(
             "Boss Tone Exchange credentials not configured. "
-            "Add your username and password to config.ini under [toneexchange]."
+            "Add your username and password in the app's Settings pane."
         )
 
     api_headers = {

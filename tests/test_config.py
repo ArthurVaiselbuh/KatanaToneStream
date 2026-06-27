@@ -37,14 +37,24 @@ def test_out_of_range_returns_minus_one(app_home):
 def test_default_llm_defaults(app_home):
     _write_config(app_home, "")
     assert config.default_llm_provider() == "openai"
-    assert config.default_llm_model() == ""
+    assert config.default_llm_model("gemini") == ""
 
 
 def test_set_default_llm_round_trip(app_home):
     _write_config(app_home, "")
     config.set_default_llm("gemini", "gemini/gemini-2.5-pro")
     assert config.default_llm_provider() == "gemini"
-    assert config.default_llm_model() == "gemini/gemini-2.5-pro"
+    assert config.default_llm_model("gemini") == "gemini/gemini-2.5-pro"
+
+
+def test_default_llm_model_is_per_provider(app_home):
+    _write_config(app_home, "")
+    config.set_default_llm("gemini", "gemini/gemini-flash-latest")
+    config.set_default_llm("openai", "openai/gpt-4o")
+    # Switching the default provider must not lose the other provider's last model.
+    assert config.default_llm_model("gemini") == "gemini/gemini-flash-latest"
+    assert config.default_llm_model("openai") == "openai/gpt-4o"
+    assert config.default_llm_model("anthropic") == ""
 
 
 def test_configured_providers_filters_by_key(monkeypatch):
