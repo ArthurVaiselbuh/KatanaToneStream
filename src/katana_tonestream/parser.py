@@ -27,7 +27,7 @@ def _decode_patch_name(name_hex: list[str], fallback: str = "") -> str:
             .decode("ascii", errors="replace")
             .strip()
         )
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return fallback
 
 
@@ -71,7 +71,7 @@ def _apply_patch0(patch: KatanaPatch, patch_0: list[str]) -> None:
             patch.treble = int(patch_0[22], 16)
         if len(patch_0) > 23:
             patch.presence = int(patch_0[23], 16)
-    except ValueError, IndexError:
+    except (ValueError, IndexError):
         pass
 
 
@@ -88,7 +88,7 @@ def _apply_fx(patch: KatanaPatch, param_set: dict) -> None:
             patch.fx2_on = int(fx2[0], 16) != 0
         if len(fx2) > 1:
             patch.fx2_type = int(fx2[1], 16)
-    except ValueError, IndexError:
+    except (ValueError, IndexError):
         pass
 
 
@@ -102,7 +102,7 @@ def _apply_delay(patch: KatanaPatch, param_set: dict) -> None:
             patch.delay_type = int(d[1], 16)
         if len(d) > 6:
             patch.delay_level = int(d[6], 16)
-    except ValueError, IndexError:
+    except (ValueError, IndexError):
         pass
 
 
@@ -120,7 +120,7 @@ def _apply_reverb(patch: KatanaPatch, param_set: dict) -> None:
             patch.reverb_type = int(p1[1], 16)
         if len(p1) > 8:
             patch.reverb_level = int(p1[8], 16)
-    except ValueError, IndexError:
+    except (ValueError, IndexError):
         pass
 
 
@@ -134,7 +134,7 @@ def _apply_status(patch: KatanaPatch, param_set: dict) -> None:
         st = param_set.get("UserPatch%Status", [])
         if len(st) > 12:
             patch.variation = int(st[12], 16)
-    except ValueError, IndexError:
+    except (ValueError, IndexError):
         pass
 
 

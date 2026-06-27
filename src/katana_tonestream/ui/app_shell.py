@@ -13,7 +13,6 @@ from pathlib import Path
 
 import flet as ft
 
-from ..address_map_parser import AddressMapError, load_and_validate
 from ..art_resolver import resolve_art
 from ..cache import delete_patch, get_art_path, get_cached_patches, save_art
 from ..config import midi_target_patch
@@ -31,9 +30,8 @@ from .slot_picker import SlotPicker
 
 log = logging.getLogger(__name__)
 
-_ASSETS = Path(__file__).resolve().parent.parent.parent.parent / "assets"
+_ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _ICON = _ASSETS / "logo.ico"
-_ADDRESS_MAP = _ASSETS / "address_map.js"
 _MIDI_OK = "#22C55E"
 _MIDI_BAD = "#EF4444"
 
@@ -45,8 +43,6 @@ class AppShell:
         self.midi = service.midi
         self._applying: set[str] = set()
         self._cards: dict[str, PatchCard] = {}
-
-        self._address_map_ok, self._address_map_error = self._check_address_map()
 
         cfg_patch = midi_target_patch()
         self.slot_picker = SlotPicker(page, initial=cfg_patch if cfg_patch >= 0 else None)
@@ -80,35 +76,8 @@ class AppShell:
             card.refresh_apply_state()
         self.page.update()
 
-    @staticmethod
-    def _check_address_map() -> tuple[bool, str]:
-        try:
-            load_and_validate(_ADDRESS_MAP)
-            return True, ""
-        except AddressMapError as exc:
-            log.warning("Address map validation failed: %s", exc)
-            return False, str(exc)
-
     # ── Generate ────────────────────────────────────────────────────────────
     def _on_generate_clicked(self) -> None:
-        if not self._address_map_ok:
-            self.page.show_dialog(
-                ft.AlertDialog(
-                    modal=True,
-                    title=ft.Text("Address Map Missing"),
-                    content=ft.Text(
-                        f"Cannot generate patch: {self._address_map_error}",
-                        size=13,
-                    ),
-                    actions=[
-                        ft.TextButton("OK", on_click=lambda e: self.page.pop_dialog()),
-                    ],
-                    actions_alignment=ft.MainAxisAlignment.END,
-                    bgcolor=theme.SURFACE_VAR,
-                    shape=ft.RoundedRectangleBorder(radius=12),
-                )
-            )
-            return
         self.generate_dialog.open()
 
     # ── Credentials changed ─────────────────────────────────────────────────

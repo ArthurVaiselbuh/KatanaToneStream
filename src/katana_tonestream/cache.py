@@ -1,7 +1,8 @@
 """Local patch cache — stores downloaded .tsl files, art, and an index."""
 
+import contextlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import paths
@@ -25,10 +26,8 @@ def _meta_to_dict(meta: PatchMeta) -> dict:
 def _dict_to_meta(d: dict) -> PatchMeta:
     last_used = None
     if d.get("last_used"):
-        try:
+        with contextlib.suppress(ValueError):
             last_used = datetime.fromisoformat(d["last_used"])
-        except ValueError:
-            pass
     return PatchMeta(
         id=d["id"],
         name=d["name"],
@@ -50,7 +49,7 @@ def load_index() -> dict[str, PatchMeta]:
         with open(index_file, encoding="utf-8") as f:
             raw: dict = json.load(f)
         return {k: _dict_to_meta(v) for k, v in raw.items()}
-    except json.JSONDecodeError, KeyError:
+    except (json.JSONDecodeError, KeyError):
         return {}
 
 
@@ -84,7 +83,7 @@ def is_cached(patch_id: str) -> bool:
 def mark_used(patch_id: str) -> None:
     index = load_index()
     if patch_id in index:
-        index[patch_id].last_used = datetime.now(timezone.utc)
+        index[patch_id].last_used = datetime.now(UTC)
         _save_index(index)
 
 
@@ -95,7 +94,7 @@ def get_cached_patches(query: str = "") -> list[PatchMeta]:
         q = query.lower()
         results = [m for m in results if q in m.name.lower() or q in m.author.lower()]
     results.sort(
-        key=lambda m: m.last_used or datetime.min.replace(tzinfo=timezone.utc),
+        key=lambda m: m.last_used or datetime.min.replace(tzinfo=UTC),
         reverse=True,
     )
     return results

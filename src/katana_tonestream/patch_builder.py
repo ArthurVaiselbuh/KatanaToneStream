@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 _BASE_TEMPLATE_PATH = _ASSETS_DIR / "base_template.json"
 
 # Byte positions within UserPatch%Patch_0. Authoritative source: address_map.js
@@ -132,7 +132,7 @@ def _load_base_template() -> dict | None:
     try:
         with open(_BASE_TEMPLATE_PATH, encoding="utf-8") as f:
             data = json.load(f)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         log.warning("Bundled base template missing/invalid at %s", _BASE_TEMPLATE_PATH)
         return None
     if not isinstance(data, dict) or "UserPatch%Patch_0" not in data:

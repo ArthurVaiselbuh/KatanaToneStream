@@ -152,13 +152,8 @@ class LogPanel:
 
     def _copy(self) -> None:
         lines = [
-            "%s [%s] %s: %s"
-            % (
-                datetime.fromtimestamp(r.created).strftime("%H:%M:%S"),
-                r.levelname,
-                r.name,
-                r.getMessage(),
-            )
+            f"{datetime.fromtimestamp(r.created).strftime('%H:%M:%S')} "
+            f"[{r.levelname}] {r.name}: {r.getMessage()}"
             for r in self._ui_log.get_records(self._level)[-_MAX_ROWS:]
         ]
         self._page.set_clipboard("\n".join(lines))

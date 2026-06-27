@@ -28,10 +28,10 @@ packages = ["src/katana_tonestream"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "SIM", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

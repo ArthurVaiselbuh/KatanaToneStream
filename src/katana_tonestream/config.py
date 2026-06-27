@@ -11,8 +11,11 @@ config.ini search order (first found wins):
 """
 
 import configparser
+import contextlib
 import logging
 from pathlib import Path
+
+import keyring as _keyring
 
 from . import paths
 
@@ -22,14 +25,6 @@ _KEYRING_SERVICE = "katana_tonestream"
 _KEYRING_USER_KEY = "toneexchange_username"
 _KEYRING_PASS_KEY = "toneexchange_password"
 _KEYRING_LLM_PREFIX = "katana_tonestream_llm_api_key"  # per-provider: "<prefix>:<provider>"
-
-try:
-    import keyring as _keyring
-
-    _KEYRING_OK = True
-except Exception:
-    _KEYRING_OK = False
-    log.warning("keyring not available — credentials cannot be stored securely")
 
 
 def _search_paths() -> list[Path]:
@@ -76,8 +71,6 @@ def midi_target_patch() -> int:
 
 def toneexchange_credentials() -> tuple[str, str]:
     """Return (username, password) from the OS keyring, or ('', '') if not set."""
-    if not _KEYRING_OK:
-        return "", ""
     try:
         username = _keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER_KEY) or ""
         password = _keyring.get_password(_KEYRING_SERVICE, _KEYRING_PASS_KEY) or ""
@@ -89,8 +82,6 @@ def toneexchange_credentials() -> tuple[str, str]:
 
 def set_toneexchange_credentials(username: str, password: str) -> bool:
     """Save credentials to the OS keyring. Returns True on success."""
-    if not _KEYRING_OK:
-        return False
     try:
         _keyring.set_password(_KEYRING_SERVICE, _KEYRING_USER_KEY, username)
         _keyring.set_password(_KEYRING_SERVICE, _KEYRING_PASS_KEY, password)
@@ -103,13 +94,9 @@ def set_toneexchange_credentials(username: str, password: str) -> bool:
 
 def delete_toneexchange_credentials() -> None:
     """Remove ToneExchange credentials from the keyring."""
-    if not _KEYRING_OK:
-        return
     for key in (_KEYRING_USER_KEY, _KEYRING_PASS_KEY):
-        try:
+        with contextlib.suppress(Exception):
             _keyring.delete_password(_KEYRING_SERVICE, key)
-        except Exception:
-            pass
 
 
 # ── LLM API keys, one per provider (keyring) + default selection (config.ini) ─
@@ -121,7 +108,7 @@ def _llm_key_name(provider: str) -> str:
 
 def llm_api_key(provider: str) -> str:
     """Return the stored API key for a provider (e.g. 'openai'), or '' if not set."""
-    if not _KEYRING_OK or not provider:
+    if not provider:
         return ""
     try:
         return _keyring.get_password(_KEYRING_SERVICE, _llm_key_name(provider)) or ""
@@ -132,8 +119,6 @@ def llm_api_key(provider: str) -> str:
 
 def set_llm_api_key(provider: str, key: str) -> bool:
     """Save a provider's API key to the OS keyring. Returns True on success."""
-    if not _KEYRING_OK:
-        return False
     try:
         _keyring.set_password(_KEYRING_SERVICE, _llm_key_name(provider), key)
         return True
@@ -144,12 +129,8 @@ def set_llm_api_key(provider: str, key: str) -> bool:
 
 def delete_llm_api_key(provider: str) -> None:
     """Remove a provider's API key from the keyring."""
-    if not _KEYRING_OK:
-        return
-    try:
+    with contextlib.suppress(Exception):
         _keyring.delete_password(_KEYRING_SERVICE, _llm_key_name(provider))
-    except Exception:
-        pass
 
 
 def _set_ini_value(section: str, key: str, value: str) -> None:

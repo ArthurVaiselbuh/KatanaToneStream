@@ -219,5 +219,6 @@ __marimo__/
 
 # KatanaToneStream
 config.ini
+.captures/
 
 .claude/

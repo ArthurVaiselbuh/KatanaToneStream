@@ -7,7 +7,10 @@ what the given API key can actually call — no hard-coded model names that go s
 
 import logging
 
+import litellm
+
 from . import config
+from .logging_setup import tame_litellm_logging
 
 log = logging.getLogger(__name__)
 
@@ -74,12 +77,7 @@ def list_models(provider: str, api_key: str) -> list[str]:
     Returns an empty list if the provider can't be queried (bad key, offline, or a
     provider that doesn't support endpoint discovery). Never raises.
     """
-    import litellm
-
-    from .logging_setup import tame_litellm_logging
-
     tame_litellm_logging()
-
     try:
         raw = litellm.get_valid_models(
             check_provider_endpoint=True,

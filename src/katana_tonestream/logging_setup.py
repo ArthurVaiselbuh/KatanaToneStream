@@ -8,7 +8,13 @@ import-time side effect. ``setup_logging`` returns the in-memory
 
 import collections
 import logging
+import os
 from logging.handlers import RotatingFileHandler
+
+import litellm
+
+# Suppress litellm's verbose console output before it is imported anywhere.
+os.environ.setdefault("LITELLM_LOG", "WARNING")
 
 from . import paths
 
@@ -95,24 +101,26 @@ def setup_logging() -> FletLogHandler:
 # strip the handler (records already propagate to root → file + UI handlers) and
 # silence the banner so all LLM logging lands in the app's log window, not the console.
 _LITELLM_LOGGERS = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
-_litellm_tamed = False
 
 
 def tame_litellm_logging() -> None:
-    """Redirect litellm's console output into the app log handlers. Idempotent."""
-    global _litellm_tamed
-    if _litellm_tamed:
-        return
-    try:
-        import litellm
+    """Strip litellm's console handlers and cap all LiteLLM loggers at WARNING.
 
-        litellm.suppress_debug_info = True
-    except Exception:
-        return
+    Called before each litellm API call because litellm lazy-adds its StreamHandler
+    during the first completion(), after any pre-call cleanup would have run.
+    """
+    litellm.suppress_debug_info = True
+    # Scan every LiteLLM-prefixed logger that has been created so far, including
+    # sub-loggers (e.g. "LiteLLM.litellm_logging", "LiteLLM.http_handler").
+    for name in list(logging.Logger.manager.loggerDict):
+        if name.startswith("LiteLLM"):
+            lg = logging.getLogger(name)
+            lg.handlers.clear()
+            lg.propagate = True
+            lg.setLevel(logging.WARNING)
+    # Also cover the well-known names in case they haven't been created yet.
     for name in _LITELLM_LOGGERS:
         lg = logging.getLogger(name)
-        for handler in list(lg.handlers):
-            lg.removeHandler(handler)
+        lg.handlers.clear()
         lg.propagate = True
         lg.setLevel(logging.WARNING)
-    _litellm_tamed = True

@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import flet as ft
 
@@ -406,7 +406,7 @@ class GenerateDialog:
         # _current_params() keys match KatanaPatch field names, so spread them directly.
         p = self._current_params()
         meta = PatchMeta(
-            id=f"gen_{int(datetime.now(timezone.utc).timestamp())}",
+            id=f"gen_{int(datetime.now(UTC).timestamp())}",
             name=name,
             author="LLM",
             source="generated",
