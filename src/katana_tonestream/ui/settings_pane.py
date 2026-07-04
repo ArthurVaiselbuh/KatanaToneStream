@@ -2,10 +2,13 @@
 
 import flet as ft
 
+from .. import katana_channels
 from ..config import (
+    amp_model,
     delete_llm_api_key,
     delete_toneexchange_credentials,
     llm_api_key,
+    set_amp_model,
     set_llm_api_key,
     set_toneexchange_credentials,
     toneexchange_credentials,
@@ -15,9 +18,26 @@ from . import theme
 
 
 class SettingsPane:
-    def __init__(self, page: ft.Page, on_credentials_changed: callable) -> None:
+    def __init__(
+        self,
+        page: ft.Page,
+        on_credentials_changed: callable,
+        on_amp_model_changed: callable = lambda model: None,
+    ) -> None:
         self._page = page
         self._on_changed = on_credentials_changed
+        self._on_amp_model_changed = on_amp_model_changed
+
+        # ── Amp model ─────────────────────────────────────────────────────────
+        self._amp_model = theme.dropdown(
+            "Katana model",
+            options=[
+                ft.dropdown.Option(key=k, text=v) for k, v in katana_channels.MODEL_LABELS.items()
+            ],
+            value=amp_model(),
+            on_select=self._amp_model_select,
+        )
+        self._amp_status = ft.Text("", size=12, color=theme.AMBER)
 
         # ── ToneExchange ──────────────────────────────────────────────────────
         self._username = theme.text_field("ToneExchange username", hint_text="your@email.com")
@@ -89,6 +109,15 @@ class SettingsPane:
                         spacing=6,
                     ),
                     ft.Divider(height=1, color=theme.BORDER_DIM),
+                    ft.Text("Amp", size=12, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
+                    ft.Text(
+                        "Determines channel count",
+                        size=11,
+                        color=theme.TEXT_DIM,
+                    ),
+                    self._amp_model,
+                    self._amp_status,
+                    ft.Divider(height=1, color=theme.BORDER_DIM),
                     ft.Text(
                         "Boss Tone Exchange",
                         size=12,
@@ -131,6 +160,8 @@ class SettingsPane:
         self._page.update()
 
     def _load_fields(self) -> None:
+        self._amp_model.value = amp_model()
+        self._amp_status.value = ""
         username, password = toneexchange_credentials()
         self._username.value = username
         self._password.value = password
@@ -138,6 +169,13 @@ class SettingsPane:
         for provider, field in self._llm_key_fields.items():
             field.value = llm_api_key(provider)
         self._llm_status.value = ""
+
+    def _amp_model_select(self, e) -> None:
+        model = self._amp_model.value or katana_channels.DEFAULT_MODEL
+        set_amp_model(model)
+        self._on_amp_model_changed(model)
+        self._amp_status.value = f"Saved — target picker updated ({model} W)."
+        self._page.update()
 
     def _te_save(self, e) -> None:
         username = (self._username.value or "").strip()

@@ -47,7 +47,7 @@ _FX2_ON_OFF = 0  # UserPatch%Fx(2)[0] = PRM_FX1_SW (second block)
 _FX2_TYPE = 1  # UserPatch%Fx(2)[1] = PRM_FX1_FXTYPE
 _DELAY_ON_OFF = 0  # UserPatch%Delay(1/2)[0] = PRM_DLY_SW
 _DELAY_TYPE = 1  # UserPatch%Delay(1)[1] = PRM_DLY_TYPE (0-10)
-_DELAY_LEVEL = 6  # UserPatch%Delay(1/2)[6] = PRM_DLY_COMMON_EFFECT_LEVEL (0-120)
+_DELAY_LEVEL = 6  # UserPatch%Delay(1)[6] = PRM_DLY_COMMON_EFFECT_LEVEL (0-120)
 _PATCH1_REVERB_ON = 0  # UserPatch%Patch_1[0] = PRM_REVERB_SW (capture: addr 60 00 05 40)
 _PATCH1_REVERB_TYPE = 1  # UserPatch%Patch_1[1] = PRM_REVERB_TYPE (0-6)
 _PATCH1_REVERB_LEVEL = 8  # UserPatch%Patch_1[8] = PRM_REVERB_EFFECT_LEVEL (0-100)
@@ -104,13 +104,21 @@ def build_raw_bytes(patch: "KatanaPatch", template: dict) -> dict:
         _set_byte(fx2, _FX2_TYPE, patch.fx2_type)
         rb["UserPatch%Fx(2)"] = fx2
 
-    for key in ("UserPatch%Delay(1)", "UserPatch%Delay(2)"):
-        if key in rb:
-            d = list(rb[key])
-            _set_byte(d, _DELAY_ON_OFF, 0x01 if patch.delay_on else 0x00)
-            _set_byte(d, _DELAY_TYPE, patch.delay_type)
-            _set_byte(d, _DELAY_LEVEL, patch.delay_level)
-            rb[key] = d
+    if "UserPatch%Delay(1)" in rb:
+        d = list(rb["UserPatch%Delay(1)"])
+        _set_byte(d, _DELAY_ON_OFF, 0x01 if patch.delay_on else 0x00)
+        _set_byte(d, _DELAY_TYPE, patch.delay_type)
+        _set_byte(d, _DELAY_LEVEL, patch.delay_level)
+        rb["UserPatch%Delay(1)"] = d
+
+    # Delay(2) is an independent second delay unit that runs simultaneously
+    # with Delay(1) (address_map.js: 0x520 vs 0x500). Writing the generated
+    # settings to both would stack two identical delays, so the single
+    # generated delay lives on Delay(1) and Delay(2) is forced off.
+    if "UserPatch%Delay(2)" in rb:
+        d2 = list(rb["UserPatch%Delay(2)"])
+        _set_byte(d2, _DELAY_ON_OFF, 0x00)
+        rb["UserPatch%Delay(2)"] = d2
 
     if "UserPatch%Patch_1" in rb:
         p1 = list(rb["UserPatch%Patch_1"])

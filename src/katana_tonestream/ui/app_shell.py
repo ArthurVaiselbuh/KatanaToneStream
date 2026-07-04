@@ -15,7 +15,7 @@ import flet as ft
 
 from ..art_resolver import resolve_art
 from ..cache import delete_patch, get_art_path, get_cached_patches, save_art
-from ..config import midi_target_patch
+from ..config import amp_model, midi_target_patch
 from ..fetcher import fetch_art
 from ..logging_setup import FletLogHandler
 from ..models import PatchMeta
@@ -45,9 +45,15 @@ class AppShell:
         self._cards: dict[str, PatchCard] = {}
 
         cfg_patch = midi_target_patch()
-        self.slot_picker = SlotPicker(page, initial=cfg_patch if cfg_patch >= 0 else None)
+        self.slot_picker = SlotPicker(
+            page, initial=cfg_patch if cfg_patch >= 0 else None, model=amp_model()
+        )
         self.log_panel = LogPanel(page, ui_log)
-        self.settings_pane = SettingsPane(page, on_credentials_changed=self._on_credentials_changed)
+        self.settings_pane = SettingsPane(
+            page,
+            on_credentials_changed=self._on_credentials_changed,
+            on_amp_model_changed=self.slot_picker.set_model,
+        )
         self.generate_dialog = GenerateDialog(page, self.midi, on_save=self._on_generate_saved)
         self.search_bar = SearchBar(page, self._on_search, on_generate=self._on_generate_clicked)
 
@@ -190,13 +196,16 @@ class AppShell:
 
     def _midi_monitor(self) -> None:
         while True:
-            try:
-                if not self.midi.is_connected():
-                    self.midi.connect()
-                self._refresh_midi_chip()
-            except Exception:
-                log.debug("MIDI monitor poll failed", exc_info=True)
+            self.page.run_thread(self._midi_monitor_tick)
             time.sleep(5)
+
+    def _midi_monitor_tick(self) -> None:
+        try:
+            if not self.midi.is_connected():
+                self.midi.connect()
+            self._refresh_midi_chip()
+        except Exception:
+            log.debug("MIDI monitor poll failed", exc_info=True)
 
     def _initial_load(self) -> None:
         cached = get_cached_patches()

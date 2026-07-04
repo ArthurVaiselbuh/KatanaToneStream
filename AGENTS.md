@@ -73,6 +73,9 @@ Strict layering, UI-free core so the flow is testable without Flet or a real amp
 - **`katana_catalog.py`** — pure data: type enumerations and the capture-derived
   `KATANA_CHANNELS`. Byte mappings/type ranges are hardcoded here and in
   `parser.py`/`patch_builder.py`;
+- **`katana_channels.py`** — pure data: the amp's real MIDI PC→channel recall map per
+  model, grouped by bank (100 W: A/B × CH-1..4, 50 W: A/B × CH-1..2), with Tone
+  Studio channel names. See MIDI notes below.
 - **`llm_generator.py`** — `generate_patch(...)`, a pure (no Flet) three-phase LLM
   conversation (character → type selection → parameter values) returning a merged dict.
 - **`patch_builder.py`** — `build_raw_bytes()` deep-copies a base template and overwrites
@@ -94,6 +97,14 @@ bases are fixed and 0x100-page-aligned (Fx(1) at `60 00 01 00`); DT1 payloads ca
 bytes (`MAX_CHUNK`), splitting larger sections at the page boundary.
 
 `send_patch` writes to the **live TONE buffer** (`0x60000000`) only.
+
+**Channel recall (`katana_channels.py`).** The amp recalls a stored channel via MIDI
+Program Change; the 100 W class exposes 8 channels — `A: CH-1`…`A: CH-4` = PC 0-3,
+`B: CH-1`…`B: CH-4` = PC 5-8 — and the 50 W exposes 4 (`A: CH-1/2`, `B: CH-1/2`). PC 4
+is PANEL (skipped), so bank B always starts at PC 5. Names match Boss Tone Studio.
+`[midi] amp_model` (`100`|`50`, default `50`) selects the map; `[midi] target_patch`
+(e.g. `A: CH-1`) picks the default channel,
+blank/unknown → TONE-only.
 
 ### Capture toolchain (`tools/`)
 

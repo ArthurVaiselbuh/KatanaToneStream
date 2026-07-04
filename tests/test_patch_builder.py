@@ -116,7 +116,16 @@ def test_fx_on_off():
 def test_delay_on_off():
     rb = build_raw_bytes(_patch(delay_on=True), copy.deepcopy(_TEMPLATE))
     assert int(rb["UserPatch%Delay(1)"][0], 16) == 1
-    assert int(rb["UserPatch%Delay(2)"][0], 16) == 1
+    # Delay(2) is a second, simultaneous delay unit — it must stay off so the
+    # generated patch has a single delay voice, not two stacked ones.
+    assert int(rb["UserPatch%Delay(2)"][0], 16) == 0
+
+
+def test_delay2_forced_off_even_if_template_has_it_on():
+    template = copy.deepcopy(_TEMPLATE)
+    template["UserPatch%Delay(2)"][0] = "01"
+    rb = build_raw_bytes(_patch(delay_on=True), template)
+    assert int(rb["UserPatch%Delay(2)"][0], 16) == 0
 
 
 def test_reverb_on_off():
@@ -175,9 +184,11 @@ def test_fx_types_written():
 
 
 def test_delay_type_written():
-    rb = build_raw_bytes(_patch(delay_type=4), copy.deepcopy(_TEMPLATE))
-    assert int(rb["UserPatch%Delay(1)"][1], 16) == 4  # Tape delay
-    assert int(rb["UserPatch%Delay(2)"][1], 16) == 4  # both delay blocks
+    template = copy.deepcopy(_TEMPLATE)
+    template["UserPatch%Delay(2)"][1] = "AA"
+    rb = build_raw_bytes(_patch(delay_type=8), template)
+    assert int(rb["UserPatch%Delay(1)"][1], 16) == 8  # Tape Echo
+    assert rb["UserPatch%Delay(2)"][1] == "AA"  # Delay(2) settings untouched
 
 
 def test_reverb_type_written():
@@ -190,7 +201,6 @@ def test_reverb_type_written():
 def test_delay_level_written():
     rb = build_raw_bytes(_patch(delay_level=90), copy.deepcopy(_TEMPLATE))
     assert int(rb["UserPatch%Delay(1)"][6], 16) == 90  # PRM_DLY_COMMON_EFFECT_LEVEL
-    assert int(rb["UserPatch%Delay(2)"][6], 16) == 90
 
 
 def test_reverb_level_written():

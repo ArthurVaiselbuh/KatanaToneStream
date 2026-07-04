@@ -17,7 +17,7 @@ from pathlib import Path
 
 import keyring as _keyring
 
-from . import paths
+from . import katana_channels, paths
 
 log = logging.getLogger(__name__)
 
@@ -58,12 +58,29 @@ def get(section: str, key: str, fallback: str = "") -> str:
     return _cfg.get(section, key, fallback=fallback)
 
 
+def amp_model() -> str:
+    """Configured Katana model key ('100' or '50'); defaults to 50 W.
+
+    Determines how many channel memories exist and the name→PC map used to
+    resolve ``[midi] target_patch`` (100 W: A1-A4/B1-B4, 50 W: A1-A2/B1-B2).
+    """
+    return katana_channels.normalize_model(get("midi", "amp_model", fallback=""))
+
+
+def set_amp_model(model: str) -> None:
+    """Persist the Katana model ('50' or '100') to config.ini [midi] amp_model."""
+    _set_ini_value("midi", "amp_model", katana_channels.normalize_model(model))
+
+
 def midi_target_patch() -> int:
-    """Return the default target patch slot as a PC number (0=A1 … 39=E8), or -1 for TONE-only."""
-    raw = get("midi", "target_patch", fallback="").strip().upper()
-    if len(raw) == 2 and raw[0] in "ABCDE" and raw[1] in "12345678":
-        return (ord(raw[0]) - ord("A")) * 8 + (int(raw[1]) - 1)
-    return -1  # no config → default to TONE-only (no PC)
+    """Return the default target channel as a MIDI PC number, or -1 for TONE-only.
+
+    Channel names and PCs depend on [midi] amp_model. Blank/unknown → -1
+    (write the live TONE buffer only, no channel switch).
+    """
+    raw = get("midi", "target_patch", fallback="")
+    pc = katana_channels.pc_for_name(raw, amp_model())
+    return pc if pc is not None else -1
 
 
 # ── ToneExchange credentials (keyring) ───────────────────────────────────────

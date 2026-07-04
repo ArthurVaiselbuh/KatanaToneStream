@@ -77,7 +77,7 @@ def _build_dt1(address: list[int], data: list[int]) -> list[int]:
 #
 # Each entry is a UserPatch%* section and the fixed 0x100-page-aligned base
 # address Tone Studio writes it to (TONE = live/current patch buffer at base
-# 0x60000000). Order matches the capture. Sections larger than MAX_CHUNK (only
+# 0x60000000). Order is irrelevant for DT1 writes. Sections larger than MAX_CHUNK (only
 # Fx(1)/Fx(2), 225 B) are split at the 128-byte page boundary by send_patch;
 # _roland_addr_add(base, 128) yields the next page base the device expects.
 #
@@ -188,24 +188,27 @@ class KatanaMidi:
             time.sleep(SEND_DELAY_S)
 
     def send_program_change(self, pc: int, midi_channel: int = 1) -> None:
-        """Send a MIDI Program Change to switch the amp to the given patch slot.
+        """Send a MIDI Program Change to recall a stored tone-setting channel.
 
-        pc=0 → A1, pc=1 → A2, …, pc=7 → A8, pc=8 → B1, …, pc=39 → E8.
+        The Katana Mk2 recalls channels via PC per its RX PC map (defaults from
+        address_map.js: bank A CH1-4 = PC 0-3, PANEL = PC 4, bank B CH1-4 =
+        PC 5-8 on the 100 W; the 50 W has CH1-2 per bank = PC 0-1 / 5-6). See
+        katana_channels for names and the map.
         midi_channel is 1-indexed (default 1).
         """
         if not self.is_connected():
             return
         ch_byte = 0xC0 | ((midi_channel - 1) & 0x0F)
         self._out.send_message([ch_byte, pc & 0x7F])
-        slot = chr(ord("A") + pc // 8) + str(pc % 8 + 1)
-        log.info("Program Change → slot %s (PC %d, ch %d)", slot, pc, midi_channel)
+        log.info("Program Change → PC %d (ch %d)", pc, midi_channel)
         time.sleep(0.5)  # give amp time to finish loading patch before SysEx
 
     def send_patch(self, patch: "KatanaPatch", target_patch: int | None = None) -> None:
         """Send a KatanaPatch to the amp's live TONE buffer via Roland DT1 SysEx.
 
-        If target_patch is given (0=A1 … 39=E8), a Program Change is sent first
-        to switch the amp to that slot before writing the SysEx data.
+        If target_patch is given (a MIDI PC number; see katana_channels), a
+        Program Change is sent first to recall that channel before writing the
+        SysEx data into the live TONE buffer.
         """
         if not self.is_connected():
             log.warning("send_patch called but Katana not connected")

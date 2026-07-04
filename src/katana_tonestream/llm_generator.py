@@ -93,6 +93,10 @@ Reverb options: {reverb_options}
 _PROMPT_VALUES = """\
 Artist: {artist}
 Song: {song}
+
+Tone analysis:
+{character}
+
 Preamp: {preamp_name}
 Booster/OD: {od_name}
 FX1: {fx1_name}
@@ -297,6 +301,22 @@ def _clamp(val, lo: int, hi: int, key: str) -> int:
         raise ValueError(f"Field '{key}' has invalid value: {val!r}")
 
 
+def _snap_type(val, catalog: dict[int, str], key: str) -> int:
+    """Coerce an LLM-chosen type id to the nearest valid catalog entry.
+
+    The catalogs have gaps (types with no Tone Studio editor support are not
+    offered), so out-of-catalog picks snap to the closest offered id instead
+    of merely clamping to the range ends.
+    """
+    try:
+        v = int(val)
+    except (TypeError, ValueError):
+        raise ValueError(f"Field '{key}' has invalid value: {val!r}")
+    if v in catalog:
+        return v
+    return min(catalog, key=lambda k: abs(k - v))
+
+
 def _phase_character(artist: str, song: str, extra: str, client) -> str:
     """Free-form tone analysis that seeds the later structured phases."""
     prompt = _PROMPT_CHARACTER.format(artist=artist, song=song, extra_block=_extra_block(extra))
@@ -323,19 +343,20 @@ def _phase_types(artist: str, song: str, character: str, extra: str, client) -> 
         if key not in data:
             raise ValueError(f"Types phase missing field '{key}'")
     return {
-        "preamp_type": _clamp(data["preamp_type"], 0, max(PREAMP_TYPES), "preamp_type"),
-        "od_type": _clamp(data["od_type"], 0, max(OD_TYPES), "od_type"),
-        "fx1_type": _clamp(data["fx1_type"], 0, max(FX_TYPES), "fx1_type"),
-        "fx2_type": _clamp(data["fx2_type"], 0, max(FX_TYPES), "fx2_type"),
-        "delay_type": _clamp(data["delay_type"], 0, max(DELAY_TYPES), "delay_type"),
-        "reverb_type": _clamp(data["reverb_type"], 0, max(REVERB_TYPES), "reverb_type"),
+        "preamp_type": _snap_type(data["preamp_type"], PREAMP_TYPES, "preamp_type"),
+        "od_type": _snap_type(data["od_type"], OD_TYPES, "od_type"),
+        "fx1_type": _snap_type(data["fx1_type"], FX_TYPES, "fx1_type"),
+        "fx2_type": _snap_type(data["fx2_type"], FX_TYPES, "fx2_type"),
+        "delay_type": _snap_type(data["delay_type"], DELAY_TYPES, "delay_type"),
+        "reverb_type": _snap_type(data["reverb_type"], REVERB_TYPES, "reverb_type"),
     }
 
 
-def _phase_values(artist: str, song: str, types: dict, extra: str, client) -> dict:
+def _phase_values(artist: str, song: str, character: str, types: dict, extra: str, client) -> dict:
     prompt = _PROMPT_VALUES.format(
         artist=artist,
         song=song,
+        character=_short(character, 1200),
         extra_block=_extra_block(extra),
         preamp_name=PREAMP_TYPES.get(types["preamp_type"], str(types["preamp_type"])),
         od_name=OD_TYPES.get(types["od_type"], str(types["od_type"])),
@@ -441,7 +462,7 @@ def generate_patch(
 
         if on_progress:
             on_progress("Dialing in parameters…")
-        values = _phase_values(artist, song, types, extra, client)
+        values = _phase_values(artist, song, character, types, extra, client)
 
         return {**types, **values}
     except ValueError as exc:

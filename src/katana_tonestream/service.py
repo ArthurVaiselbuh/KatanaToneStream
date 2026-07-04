@@ -7,7 +7,7 @@ without a real amp connected (inject fakes for ``fetcher``/``midi`` in tests).
 import logging
 from collections.abc import Callable
 
-from . import cache
+from . import cache, config, katana_channels
 from .fetcher import download_patch, scrape_guitarpatches, scrape_toneexchange
 from .katana_midi import KatanaMidi
 from .models import KatanaPatch, PatchMeta
@@ -99,8 +99,8 @@ class PatchService:
         return patches[0] if patches else None
 
 
-_SLOT_NAMES = [f"{b}{n}" for b in "ABCDE" for n in range(1, 9)]  # A1…E8
-
-
 def _slot_name(target_patch: int | None) -> str:
-    return _SLOT_NAMES[target_patch] if target_patch is not None else "TONE"
+    """Friendly channel name for a target PC (model-aware), or 'TONE' for None."""
+    if target_patch is None:
+        return "TONE"
+    return katana_channels.name_for_pc(target_patch, config.amp_model())
