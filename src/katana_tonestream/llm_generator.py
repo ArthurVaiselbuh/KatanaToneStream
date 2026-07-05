@@ -1,12 +1,18 @@
 """LLM-powered patch generator.
 
-Public API: generate_patch(artist, song, api_key, model, on_progress) -> dict
+Public API:
+  ToneSession — holds one LLM conversation: generate() runs the 3-phase
+    creation flow, refine() continues it chat-style with partial param updates.
+  generate_patch(artist, song, api_key, model, ...) -> dict — one-shot wrapper
+    around a throwaway ToneSession, kept for callers that don't need refinement.
+
 Everything else — phase structure, prompts, catalogs — is internal.
 """
 
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import litellm
 from litellm.exceptions import (
@@ -40,71 +46,65 @@ class PatchGenerationError(Exception):
 # Prompts — edit here without touching any logic
 # ---------------------------------------------------------------------------
 
-# System prompt for the structured (JSON) phases.
-_SYSTEM = (
-    "You are a guitar tone expert with deep knowledge of the Boss Katana Mk2 amplifier. "
-    "Respond ONLY with valid JSON — no prose, no markdown, no code fences."
-)
+# A single system prompt governs the whole multi-step conversation (generation
+# phases and refinement alike); each user turn states the output format it needs
+# — prose vs. a raw JSON object — so there is no per-phase system prompt.
+_SYSTEM = """\
+You are a guitar tone expert who knows the Boss Katana Mk2 inside out, along with the amps
+and pedals famous guitarists use. You work with the user in one ongoing conversation: first
+you recreate a tone in three steps (analyze its character, pick amp/effect types, dial in
+settings), then you refine it from the user's feedback until it sounds right to them.
 
-# System prompt for the opening reasoning phase, where free-form prose is wanted.
-_SYSTEM_REASONING = (
-    "You are a guitar tone expert with deep knowledge of the Boss Katana Mk2 amplifier "
-    "and the gear, amps, and pedals that famous guitarists use."
-)
+Refinement requests describe how the tone should SOUND, often vaguely ("brighter", "too
+muddy", "more 80s"). Translate them into concrete parameter moves: brightness lives in
+treble and presence; mud in bass and gain; aggression and sustain in preamp gain and OD
+drive; space and depth in delay/reverb levels; character shifts may need a different preamp,
+pedal, or effect type (pick ids from the catalogs given earlier in this conversation).
+If a request is ambiguous, pick the most likely
+interpretation and say briefly what you assumed.
 
+Draw on the whole conversation so far, and follow the output format each message asks
+for exactly: plain prose when asked to analyze, otherwise a single raw JSON object with no
+markdown and no code fences.
+"""
+
+# Turn 1 — free-form analysis. Artist/song and the user's extra request live here
+# and stay in context for every later turn, so they are never restated.
 _PROMPT_CHARACTER = """\
 Artist: {artist}
 Song: {song}
 {extra_block}
-Analyze this guitar tone for the purpose of recreating it on a Boss Katana Mk2.
-In a few sentences, describe the overall character (gain level, EQ balance, dynamics)
-and which effect categories are audibly active: booster/overdrive, modulation/FX,
-delay, and reverb. Mention the specific amps and pedals this artist is known for using.
-Write plainly — no JSON, no headings, just your reasoning.
+Analyze this guitar tone so it can be recreated on a Boss Katana Mk2. In a few sentences,
+describe the overall character (gain level, EQ balance, dynamics) and which effect categories
+are audibly active: booster/overdrive, modulation/FX, delay, and reverb. Mention the specific
+amps and pedals this artist is known for using. Write plainly — no JSON, no headings.
 """
 
+# Turn 2 — type selection. Your analysis is already in the conversation, so it is
+# referred to, not pasted back in.
 _PROMPT_TYPES = """\
-Artist: {artist}
-Song: {song}
+Using your analysis above, choose the best Boss Katana Mk2 option for each slot. Even if a
+slot would be switched off in the final tone, still pick the most plausible type.
 
-Tone analysis:
-{character}
-{extra_block}
-Select the best Boss Katana Mk2 options for each slot. Consider which gear and pedals
-this artist is associated with. Even if a slot is off, still pick the most plausible type.
+Reply with ONLY a JSON object with these integer fields: preamp_type, od_type, fx1_type,
+fx2_type, delay_type, reverb_type.
 
-Return a JSON object with exactly these fields:
-{{
-  "preamp_type": <int>,
-  "od_type": <int>,
-  "fx1_type": <int>,
-  "fx2_type": <int>,
-  "delay_type": <int>,
-  "reverb_type": <int>
-}}
-
-Preamp options: {preamp_options}
-Booster/OD options: {od_options}
-FX slot options: {fx_options}
-Delay options: {delay_options}
-Reverb options: {reverb_options}
+Pick each id from its catalog (id=name):
+Preamp: {preamp_options}
+Booster/OD: {od_options}
+FX slots (fx1, fx2): {fx_options}
+Delay: {delay_options}
+Reverb: {reverb_options}
 """
 
+# Turn 3 — dial settings. The chosen type ids are already in the conversation; we
+# remind the model of their names only (ids are opaque) so the values stay coherent.
 _PROMPT_VALUES = """\
-Artist: {artist}
-Song: {song}
+You selected: preamp {preamp_name}; booster/OD {od_name}; FX1 {fx1_name}; FX2 {fx2_name};
+delay {delay_name}; reverb {reverb_name}.
 
-Tone analysis:
-{character}
-
-Preamp: {preamp_name}
-Booster/OD: {od_name}
-FX1: {fx1_name}
-FX2: {fx2_name}
-Delay: {delay_name}
-Reverb: {reverb_name}
-{extra_block}
-Provide the exact dial settings. Return a JSON object with exactly these fields:
+Now give the exact dial settings for this tone. Reply with ONLY a JSON object with exactly
+these fields:
 {{
   "preamp_gain": <int 0-120>,
   "bass": <int 0-100>,
@@ -123,11 +123,38 @@ Provide the exact dial settings. Return a JSON object with exactly these fields:
   "confidence": <int 0-100>
 }}
 
-od_drive is the booster/overdrive pedal's gain; od_level is its output level.
-delay_level and reverb_level are the effect mix levels for those sections.
-
-EQ at 50 = flat. confidence reflects how precisely this tone is documented.
+od_drive is the booster/overdrive pedal's gain; od_level is its output level. delay_level and
+reverb_level are the effect mix levels. EQ at 50 = flat. confidence reflects how precisely this
+tone is documented.
 """
+
+# Refine turns continue the same conversation — the model already holds the full
+# tone and the option catalogs in context. We pass the live settings because the
+# user may have nudged dials by hand since the last message.
+_PROMPT_REFINE = """\
+Current Katana settings:
+{params_json}
+
+User request: {message}
+
+Adjust the settings to satisfy the request, changing as few fields as possible. Use the option
+catalogs from earlier in this conversation for any *_type change.
+
+Reply with ONLY a JSON object of this shape:
+{{"message": "<briefly explain what you changed and why>",
+ "params": {{<only the fields you change>}}}}
+Omit "params" (or leave it empty) if nothing should change.
+"""
+
+# Appended to nudge a provider that replied with non-JSON on a structured turn.
+_JSON_CORRECTION = (
+    "That was not valid JSON. Reply with ONLY the JSON object — no prose, no code fences."
+)
+
+# Titles for the collapsed generation-prompt bubbles in the chat UI.
+_LABEL_CHARACTER = "Phase 1/3 — analyze tone character"
+_LABEL_TYPES = "Phase 2/3 — select amp & effect types"
+_LABEL_VALUES = "Phase 3/3 — dial in settings"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -189,18 +216,20 @@ def _supports_schema(model: str) -> bool:
         return False
 
 
-def _json_kwargs(model: str, schema: dict, schema_name: str) -> dict:
+def _json_kwargs(model: str, schema: dict, schema_name: str, strict: bool = True) -> dict:
     """litellm kwargs that force or coax a structured JSON reply for ``model``.
 
     Prefers the provider's native JSON-schema enforcement when supported; falls
     back to Ollama's native JSON mode, and finally to nothing (we then rely on
-    the system prompt plus the parse-retry in ``_call_json``).
+    the system prompt plus the parse-retry in ``_call_json``). ``strict=False``
+    is needed for schemas with optional fields (the refine reply), which strict
+    mode forbids.
     """
     if _supports_schema(model):
         return {
             "response_format": {
                 "type": "json_schema",
-                "json_schema": {"name": schema_name, "schema": schema, "strict": True},
+                "json_schema": {"name": schema_name, "schema": schema, "strict": strict},
             }
         }
     provider = model.split("/", 1)[0] if "/" in model else ""
@@ -223,56 +252,6 @@ def _strip_fences(raw: str) -> str:
     return s.strip()
 
 
-def _call_text(client, prompt: str, *, temperature: float = 0.4) -> str:
-    """Free-form (non-JSON) completion — used for the opening reasoning phase."""
-    tame_litellm_logging()
-    response = client.complete(
-        messages=[
-            {"role": "system", "content": _SYSTEM_REASONING},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=temperature,
-        extra_kwargs={},
-    )
-    return (response.choices[0].message.content or "").strip()
-
-
-def _call_json(client, prompt: str, schema: dict, schema_name: str) -> dict:
-    """Structured-JSON completion with a one-shot corrective retry.
-
-    When the provider supports JSON-schema output the reply is guaranteed valid
-    and the retry never fires; the retry only rescues providers that fall back
-    to prompt-only JSON and occasionally wrap or malform it.
-    """
-    tame_litellm_logging()
-    extra_kwargs = _json_kwargs(client.model, schema, schema_name)
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": prompt},
-    ]
-    last_raw = ""
-    for _ in range(2):
-        response = client.complete(messages=messages, temperature=0.3, extra_kwargs=extra_kwargs)
-        raw = (response.choices[0].message.content or "").strip()
-        log.debug("LLM response: %s", raw)
-        try:
-            return json.loads(_strip_fences(raw))
-        except json.JSONDecodeError:
-            last_raw = raw
-            messages = [
-                *messages,
-                {"role": "assistant", "content": raw},
-                {
-                    "role": "user",
-                    "content": (
-                        "That was not valid JSON. Reply with ONLY the JSON object — "
-                        "no prose, no code fences."
-                    ),
-                },
-            ]
-    raise ValueError(f"model did not return valid JSON ({_short(last_raw, 80)})")
-
-
 def _friendly_llm_error(exc: Exception, model: str) -> str:
     """Translate a litellm/provider exception into a clear, actionable message."""
     provider = model.split("/", 1)[0] if "/" in model else "the provider"
@@ -285,7 +264,12 @@ def _friendly_llm_error(exc: Exception, model: str) -> str:
         )
     if isinstance(exc, RateLimitError):
         return "Rate limited by the provider. Wait a moment and try again."
-    if isinstance(exc, (Timeout, APIConnectionError, ServiceUnavailableError)):
+    if isinstance(exc, Timeout):
+        return (
+            f"{provider} timed out — a local model may still be loading, or the "
+            "provider is slow. Give it a moment and try again."
+        )
+    if isinstance(exc, (APIConnectionError, ServiceUnavailableError)):
         return f"Could not reach {provider}. Check your connection and try again."
     if isinstance(exc, BadRequestError):
         return f"{provider} rejected the request: {_short(getattr(exc, 'message', str(exc)))}"
@@ -317,97 +301,416 @@ def _snap_type(val, catalog: dict[int, str], key: str) -> int:
     return min(catalog, key=lambda k: abs(k - v))
 
 
-def _phase_character(artist: str, song: str, extra: str, client) -> str:
-    """Free-form tone analysis that seeds the later structured phases."""
-    prompt = _PROMPT_CHARACTER.format(artist=artist, song=song, extra_block=_extra_block(extra))
-    text = _call_text(client, prompt)
-    if not text:
-        raise ValueError("Character phase returned an empty response")
-    return text
+# Every user-adjustable patch field with its validation rule; drives the
+# partial-params handling in the refine flow. Ranges match _phase_values.
+_PARAM_SPECS: dict[str, tuple] = {
+    "preamp_type": ("type", PREAMP_TYPES),
+    "od_type": ("type", OD_TYPES),
+    "fx1_type": ("type", FX_TYPES),
+    "fx2_type": ("type", FX_TYPES),
+    "delay_type": ("type", DELAY_TYPES),
+    "reverb_type": ("type", REVERB_TYPES),
+    "preamp_gain": ("int", 0, 120),
+    "bass": ("int", 0, 100),
+    "mid": ("int", 0, 100),
+    "treble": ("int", 0, 100),
+    "presence": ("int", 0, 100),
+    "od_on": ("bool",),
+    "od_drive": ("int", 0, 120),
+    "od_level": ("int", 0, 100),
+    "fx1_on": ("bool",),
+    "fx2_on": ("bool",),
+    "delay_on": ("bool",),
+    "delay_level": ("int", 0, 120),
+    "reverb_on": ("bool",),
+    "reverb_level": ("int", 0, 100),
+}
+
+_REFINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "message": {"type": "string"},
+        "params": {
+            "type": "object",
+            "properties": {
+                key: {"type": "boolean" if spec[0] == "bool" else "integer"}
+                for key, spec in _PARAM_SPECS.items()
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["message"],
+    "additionalProperties": False,
+}
 
 
-def _phase_types(artist: str, song: str, character: str, extra: str, client) -> dict:
-    prompt = _PROMPT_TYPES.format(
-        artist=artist,
-        song=song,
-        character=_short(character, 1200),
-        extra_block=_extra_block(extra),
-        preamp_options=_catalog_str(PREAMP_TYPES),
-        od_options=_catalog_str(OD_TYPES),
-        fx_options=_catalog_str(FX_TYPES),
-        delay_options=_catalog_str(DELAY_TYPES),
-        reverb_options=_catalog_str(REVERB_TYPES),
-    )
-    data = _call_json(client, prompt, _TYPES_SCHEMA, "katana_types")
-    for key in ("preamp_type", "od_type", "fx1_type", "fx2_type", "delay_type", "reverb_type"):
-        if key not in data:
-            raise ValueError(f"Types phase missing field '{key}'")
-    return {
-        "preamp_type": _snap_type(data["preamp_type"], PREAMP_TYPES, "preamp_type"),
-        "od_type": _snap_type(data["od_type"], OD_TYPES, "od_type"),
-        "fx1_type": _snap_type(data["fx1_type"], FX_TYPES, "fx1_type"),
-        "fx2_type": _snap_type(data["fx2_type"], FX_TYPES, "fx2_type"),
-        "delay_type": _snap_type(data["delay_type"], DELAY_TYPES, "delay_type"),
-        "reverb_type": _snap_type(data["reverb_type"], REVERB_TYPES, "reverb_type"),
-    }
+def _validate_partial_params(data: dict) -> dict:
+    """Snap/clamp a partial params dict from the refine reply.
 
-
-def _phase_values(artist: str, song: str, character: str, types: dict, extra: str, client) -> dict:
-    prompt = _PROMPT_VALUES.format(
-        artist=artist,
-        song=song,
-        character=_short(character, 1200),
-        extra_block=_extra_block(extra),
-        preamp_name=PREAMP_TYPES.get(types["preamp_type"], str(types["preamp_type"])),
-        od_name=OD_TYPES.get(types["od_type"], str(types["od_type"])),
-        fx1_name=FX_TYPES.get(types["fx1_type"], str(types["fx1_type"])),
-        fx2_name=FX_TYPES.get(types["fx2_type"], str(types["fx2_type"])),
-        delay_name=DELAY_TYPES.get(types["delay_type"], str(types["delay_type"])),
-        reverb_name=REVERB_TYPES.get(types["reverb_type"], str(types["reverb_type"])),
-    )
-    data = _call_json(client, prompt, _VALUES_SCHEMA, "katana_values")
-    required = (
-        "preamp_gain",
-        "bass",
-        "mid",
-        "treble",
-        "presence",
-        "od_on",
-        "od_drive",
-        "od_level",
-        "fx1_on",
-        "fx2_on",
-        "delay_on",
-        "delay_level",
-        "reverb_on",
-        "reverb_level",
-        "confidence",
-    )
-    for key in required:
-        if key not in data:
-            raise ValueError(f"Values phase missing field '{key}'")
-    return {
-        "preamp_gain": _clamp(data["preamp_gain"], 0, 120, "preamp_gain"),
-        "bass": _clamp(data["bass"], 0, 100, "bass"),
-        "mid": _clamp(data["mid"], 0, 100, "mid"),
-        "treble": _clamp(data["treble"], 0, 100, "treble"),
-        "presence": _clamp(data["presence"], 0, 100, "presence"),
-        "od_on": bool(data["od_on"]),
-        "od_drive": _clamp(data["od_drive"], 0, 120, "od_drive"),
-        "od_level": _clamp(data["od_level"], 0, 100, "od_level"),
-        "fx1_on": bool(data["fx1_on"]),
-        "fx2_on": bool(data["fx2_on"]),
-        "delay_on": bool(data["delay_on"]),
-        "delay_level": _clamp(data["delay_level"], 0, 120, "delay_level"),
-        "reverb_on": bool(data["reverb_on"]),
-        "reverb_level": _clamp(data["reverb_level"], 0, 100, "reverb_level"),
-        "confidence": _clamp(data["confidence"], 0, 100, "confidence"),
-    }
+    Unknown keys and unusable values are dropped with a warning rather than
+    failing the whole reply — a mostly-good refinement should still apply.
+    """
+    out: dict = {}
+    for key, val in data.items():
+        spec = _PARAM_SPECS.get(key)
+        if spec is None:
+            log.warning("Refine reply contains unknown param %r — ignored", key)
+            continue
+        try:
+            if spec[0] == "type":
+                out[key] = _snap_type(val, spec[1], key)
+            elif spec[0] == "bool":
+                out[key] = bool(val)
+            else:
+                out[key] = _clamp(val, spec[1], spec[2], key)
+        except ValueError:
+            log.warning("Refine reply param %r has unusable value %r — ignored", key, val)
+    return out
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class ChatEntry:
+    """One turn of the LLM conversation, as sent to / received from the provider.
+
+    ``content`` is the exact text on the wire. ``display`` overrides it in the UI:
+    a refine user turn wraps the typed text in a prompt (only the typed text should
+    show), and an assistant JSON reply shows its ``message`` field, not raw JSON.
+    ``auto`` marks the machine-generated generation prompts the UI collapses;
+    ``label`` titles those collapsed bubbles.
+    """
+
+    role: str  # "user" | "assistant"
+    content: str
+    label: str | None = None
+    auto: bool = False
+    display: str | None = None
+
+
+class ToneSession:
+    """One LLM conversation: 3-phase generation, then free-form refinement.
+
+    Generation and refinement are turns of a *single* growing conversation. The
+    model's own analysis and choices are real ``assistant`` messages that stay in
+    context, instead of being pasted back into later prompts as text. Providers are
+    stateless, so the whole message list is re-sent on every call — which is also
+    what keeps the option catalogs (sent once, in the type-selection turn) available
+    for later ``*_type`` changes during refinement.
+
+    Model and API key are fixed at construction; the UI creates a fresh session per
+    Generate click. ``on_request`` (if given) fires with the user ``ChatEntry`` the
+    moment a turn is dispatched to the provider, and ``on_entry`` fires for every
+    committed ``ChatEntry`` — the same user entry object again, then the assistant
+    reply — so the UI can show a pending bubble immediately and settle it on
+    success. Both run on whatever thread drives generate/refine. A turn is
+    committed only after a successful reply, so a failed call leaves the
+    conversation unchanged and is safe to retry.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout: float = 120.0,
+        on_entry: Callable[[ChatEntry], None] | None = None,
+        on_request: Callable[[ChatEntry], None] | None = None,
+    ) -> None:
+        self.model = (model or "").strip() or "openai/gpt-4o"
+        self._api_key = api_key
+        self._timeout = timeout
+        self._on_entry = on_entry
+        self._on_request = on_request
+        self._messages: list[dict] = [{"role": "system", "content": _SYSTEM}]
+        self.history: list[ChatEntry] = []
+
+    def api_messages(self) -> list[dict]:
+        """The provider-facing message list (system prompt included), as a copy."""
+        return list(self._messages)
+
+    # ── provider I/O ──────────────────────────────────────────────────────────
+
+    def _complete(self, messages: list[dict], temperature: float, extra_kwargs: dict) -> str:
+        tame_litellm_logging()
+        response = litellm.completion(
+            model=self.model,
+            api_key=self._api_key or None,
+            messages=messages,
+            temperature=temperature,
+            timeout=self._timeout,
+            **extra_kwargs,
+        )
+        return (response.choices[0].message.content or "").strip()
+
+    @staticmethod
+    def _assistant_display(raw: str) -> str | None:
+        """A JSON reply's ``message`` field for the UI; None for non-JSON/typeless replies."""
+        try:
+            parsed = json.loads(_strip_fences(raw))
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict) and isinstance(parsed.get("message"), str):
+            return parsed["message"].strip() or None
+        return None
+
+    def _commit(self, user_entry: ChatEntry, assistant_raw: str) -> None:
+        """Append a completed user+assistant exchange to the conversation and stream it."""
+        assistant_entry = ChatEntry(
+            "assistant", assistant_raw, display=self._assistant_display(assistant_raw)
+        )
+        for entry in (user_entry, assistant_entry):
+            self.history.append(entry)
+            self._messages.append({"role": entry.role, "content": entry.content})
+            if self._on_entry:
+                try:
+                    self._on_entry(entry)
+                except Exception:
+                    log.exception("on_entry callback failed")
+
+    def _notify_request(self, user_entry: ChatEntry) -> None:
+        """Tell the UI a user turn is on the wire (before any reply exists)."""
+        if self._on_request:
+            try:
+                self._on_request(user_entry)
+            except Exception:
+                log.exception("on_request callback failed")
+
+    def _ask_text(self, user_content: str, *, label: str, temperature: float = 0.4) -> str:
+        """Free-form turn; commit and return the assistant's prose."""
+        user_entry = ChatEntry("user", user_content, label=label, auto=True)
+        self._notify_request(user_entry)
+        working = [*self._messages, {"role": "user", "content": user_content}]
+        raw = self._complete(working, temperature, {})
+        if not raw:
+            raise ValueError("model returned an empty response")
+        self._commit(user_entry, raw)
+        return raw
+
+    def _ask_json(
+        self,
+        user_content: str,
+        schema: dict,
+        schema_name: str,
+        *,
+        label: str | None = None,
+        auto: bool = True,
+        display: str | None = None,
+        strict: bool = True,
+        temperature: float = 0.3,
+    ) -> dict:
+        """Structured-JSON turn with a one-shot corrective retry.
+
+        The correction exchange is worked on a local copy and discarded — only the
+        original prompt and the final valid reply are committed, so the persistent
+        conversation never carries the malformed attempt.
+        """
+        extra_kwargs = _json_kwargs(self.model, schema, schema_name, strict=strict)
+        user_entry = ChatEntry("user", user_content, label=label, auto=auto, display=display)
+        self._notify_request(user_entry)
+        working = [*self._messages, {"role": "user", "content": user_content}]
+        last_raw = ""
+        for attempt in range(2):
+            raw = self._complete(working, temperature, extra_kwargs)
+            log.debug("LLM JSON response (%s): %s", schema_name, raw)
+            try:
+                data = json.loads(_strip_fences(raw))
+            except json.JSONDecodeError:
+                last_raw = raw
+                if attempt == 0:
+                    working = [
+                        *working,
+                        {"role": "assistant", "content": raw},
+                        {"role": "user", "content": _JSON_CORRECTION},
+                    ]
+                continue
+            self._commit(user_entry, raw)
+            return data
+        raise ValueError(f"model did not return valid JSON ({_short(last_raw, 80)})")
+
+    # ── generation phases ─────────────────────────────────────────────────────
+
+    def _phase_character(self, artist: str, song: str, extra: str) -> str:
+        prompt = _PROMPT_CHARACTER.format(artist=artist, song=song, extra_block=_extra_block(extra))
+        log.debug("LLM phase 1/3 (character) prompt:\n%s", prompt)
+        text = self._ask_text(prompt, label=_LABEL_CHARACTER)
+        log.debug("LLM phase 1/3 (character) analysis:\n%s", text)
+        return text
+
+    def _phase_types(self) -> dict:
+        prompt = _PROMPT_TYPES.format(
+            preamp_options=_catalog_str(PREAMP_TYPES),
+            od_options=_catalog_str(OD_TYPES),
+            fx_options=_catalog_str(FX_TYPES),
+            delay_options=_catalog_str(DELAY_TYPES),
+            reverb_options=_catalog_str(REVERB_TYPES),
+        )
+        data = self._ask_json(prompt, _TYPES_SCHEMA, "katana_types", label=_LABEL_TYPES)
+        log.debug("LLM phase 2/3 (types) parsed response: %s", data)
+        for key in ("preamp_type", "od_type", "fx1_type", "fx2_type", "delay_type", "reverb_type"):
+            if key not in data:
+                raise ValueError(f"Types phase missing field '{key}'")
+        result = {
+            "preamp_type": _snap_type(data["preamp_type"], PREAMP_TYPES, "preamp_type"),
+            "od_type": _snap_type(data["od_type"], OD_TYPES, "od_type"),
+            "fx1_type": _snap_type(data["fx1_type"], FX_TYPES, "fx1_type"),
+            "fx2_type": _snap_type(data["fx2_type"], FX_TYPES, "fx2_type"),
+            "delay_type": _snap_type(data["delay_type"], DELAY_TYPES, "delay_type"),
+            "reverb_type": _snap_type(data["reverb_type"], REVERB_TYPES, "reverb_type"),
+        }
+        log.debug(
+            "LLM phase 2/3 (types) resolved: %s",
+            {
+                "preamp": f"{result['preamp_type']}={PREAMP_TYPES.get(result['preamp_type'])}",
+                "od": f"{result['od_type']}={OD_TYPES.get(result['od_type'])}",
+                "fx1": f"{result['fx1_type']}={FX_TYPES.get(result['fx1_type'])}",
+                "fx2": f"{result['fx2_type']}={FX_TYPES.get(result['fx2_type'])}",
+                "delay": f"{result['delay_type']}={DELAY_TYPES.get(result['delay_type'])}",
+                "reverb": f"{result['reverb_type']}={REVERB_TYPES.get(result['reverb_type'])}",
+            },
+        )
+        return result
+
+    def _phase_values(self, types: dict) -> dict:
+        prompt = _PROMPT_VALUES.format(
+            preamp_name=PREAMP_TYPES.get(types["preamp_type"], str(types["preamp_type"])),
+            od_name=OD_TYPES.get(types["od_type"], str(types["od_type"])),
+            fx1_name=FX_TYPES.get(types["fx1_type"], str(types["fx1_type"])),
+            fx2_name=FX_TYPES.get(types["fx2_type"], str(types["fx2_type"])),
+            delay_name=DELAY_TYPES.get(types["delay_type"], str(types["delay_type"])),
+            reverb_name=REVERB_TYPES.get(types["reverb_type"], str(types["reverb_type"])),
+        )
+        data = self._ask_json(prompt, _VALUES_SCHEMA, "katana_values", label=_LABEL_VALUES)
+        log.debug("LLM phase 3/3 (values) parsed response: %s", data)
+        required = (
+            "preamp_gain",
+            "bass",
+            "mid",
+            "treble",
+            "presence",
+            "od_on",
+            "od_drive",
+            "od_level",
+            "fx1_on",
+            "fx2_on",
+            "delay_on",
+            "delay_level",
+            "reverb_on",
+            "reverb_level",
+            "confidence",
+        )
+        for key in required:
+            if key not in data:
+                raise ValueError(f"Values phase missing field '{key}'")
+        result = {
+            "preamp_gain": _clamp(data["preamp_gain"], 0, 120, "preamp_gain"),
+            "bass": _clamp(data["bass"], 0, 100, "bass"),
+            "mid": _clamp(data["mid"], 0, 100, "mid"),
+            "treble": _clamp(data["treble"], 0, 100, "treble"),
+            "presence": _clamp(data["presence"], 0, 100, "presence"),
+            "od_on": bool(data["od_on"]),
+            "od_drive": _clamp(data["od_drive"], 0, 120, "od_drive"),
+            "od_level": _clamp(data["od_level"], 0, 100, "od_level"),
+            "fx1_on": bool(data["fx1_on"]),
+            "fx2_on": bool(data["fx2_on"]),
+            "delay_on": bool(data["delay_on"]),
+            "delay_level": _clamp(data["delay_level"], 0, 120, "delay_level"),
+            "reverb_on": bool(data["reverb_on"]),
+            "reverb_level": _clamp(data["reverb_level"], 0, 100, "reverb_level"),
+            "confidence": _clamp(data["confidence"], 0, 100, "confidence"),
+        }
+        log.debug("LLM phase 3/3 (values) resolved: %s", result)
+        return result
+
+    # ── public flow ───────────────────────────────────────────────────────────
+
+    def generate(
+        self,
+        artist: str,
+        song: str,
+        extra: str = "",
+        on_progress: Callable[[str], None] | None = None,
+    ) -> dict:
+        """Run the 3-phase generation as one conversation, recording every turn.
+
+        Returns a dict with all patch fields. Always raises PatchGenerationError
+        (with a clear, user-facing message) on any failure.
+        """
+        artist = artist.strip()
+        song = song.strip()
+        extra = (extra or "").strip()
+        log.info("Generating patch for '%s' by '%s' via %s", song, artist, self.model)
+
+        try:
+            if on_progress:
+                on_progress("Analyzing tone character…")
+            self._phase_character(artist, song, extra)
+
+            if on_progress:
+                on_progress("Selecting effects and pedals…")
+            types = self._phase_types()
+
+            if on_progress:
+                on_progress("Dialing in parameters…")
+            values = self._phase_values(types)
+
+            merged = {**types, **values}
+            log.debug("LLM final merged patch params: %s", merged)
+            return merged
+        except ValueError as exc:
+            # Our own parse/validation failures (bad/missing JSON fields).
+            raise PatchGenerationError(
+                f"The model's response could not be used: {_short(str(exc))}. "
+                "Try again or pick a different model."
+            ) from exc
+        except Exception as exc:
+            # litellm/provider failures — invalid model, auth, rate limit, network, etc.
+            log.warning("LLM call failed: %s", exc)
+            raise PatchGenerationError(_friendly_llm_error(exc, self.model)) from exc
+
+    def refine(self, user_message: str, current_params: dict) -> tuple[str, dict | None]:
+        """Continue the conversation with a chat message; return (reply, partial params).
+
+        ``current_params`` is a snapshot of the UI controls so manual tweaks made
+        between messages are visible to the model. The whole conversation is already
+        the message history, so only the new turn is added. The partial params dict
+        (or None when nothing changed) contains only validated fields to merge over
+        the current settings. Raises PatchGenerationError on any failure.
+        """
+        user_message = user_message.strip()
+        prompt = _PROMPT_REFINE.format(
+            params_json=json.dumps(current_params, indent=2),
+            message=user_message,
+        )
+        log.debug("LLM refine prompt:\n%s", prompt)
+        try:
+            data = self._ask_json(
+                prompt,
+                _REFINE_SCHEMA,
+                "katana_refine",
+                label=None,
+                auto=False,
+                display=user_message,
+                strict=False,
+            )
+            log.debug("LLM refine parsed response: %s", data)
+            message = str(data.get("message") or "").strip()
+            if not message:
+                raise ValueError("Refine reply is missing 'message'")
+            raw_params = data.get("params")
+            partial = _validate_partial_params(raw_params) if isinstance(raw_params, dict) else {}
+            log.debug("LLM refine validated partial params: %s", partial)
+            return message, (partial or None)
+        except ValueError as exc:
+            raise PatchGenerationError(
+                f"The model's response could not be used: {_short(str(exc))}. "
+                "Try rephrasing your request."
+            ) from exc
+        except Exception as exc:
+            log.warning("LLM refine call failed: %s", exc)
+            raise PatchGenerationError(_friendly_llm_error(exc, self.model)) from exc
 
 
 def generate_patch(
@@ -417,61 +720,22 @@ def generate_patch(
     model: str,
     on_progress: Callable[[str], None] | None = None,
     extra: str = "",
+    timeout: float = 120.0,
 ) -> dict:
     """Generate Boss Katana Mk2 parameters for artist/song via a 3-phase LLM conversation.
 
+    One-shot wrapper around a throwaway ToneSession — use ToneSession directly
+    when the conversation should continue with ``refine``.
+
     ``extra`` is an optional free-text request from the user (e.g. "brighter, less gain")
-    that is woven into every phase's prompt when provided.
+    added to the opening analysis turn, where it stays in context for the whole run.
+
+    ``timeout`` bounds each provider call (seconds) so a hung provider — e.g. a local
+    Ollama model that never finishes loading — raises instead of blocking forever.
 
     Returns a dict with all patch fields. Always raises PatchGenerationError (with a
     clear, user-facing message) on any failure — provider errors, an invalid/retired
     model, or an unparseable response.
     """
-    effective_model = model.strip() or "openai/gpt-4o"
-    artist = artist.strip()
-    song = song.strip()
-    extra = (extra or "").strip()
-
-    log.info("Generating patch for '%s' by '%s' via %s", song, artist, effective_model)
-
-    # How JSON is requested per call is decided in _json_kwargs (native schema
-    # enforcement where supported, Ollama JSON mode otherwise); the client just
-    # forwards whatever kwargs the caller computed.
-    class _Client:
-        model = effective_model
-
-        def complete(self, messages, temperature, extra_kwargs):
-            return litellm.completion(
-                model=effective_model,
-                api_key=api_key or None,
-                messages=messages,
-                temperature=temperature,
-                **extra_kwargs,
-            )
-
-    client = _Client()
-
-    try:
-        if on_progress:
-            on_progress("Analyzing tone character…")
-        character = _phase_character(artist, song, extra, client)
-
-        if on_progress:
-            on_progress("Selecting effects and pedals…")
-        types = _phase_types(artist, song, character, extra, client)
-
-        if on_progress:
-            on_progress("Dialing in parameters…")
-        values = _phase_values(artist, song, character, types, extra, client)
-
-        return {**types, **values}
-    except ValueError as exc:
-        # Our own parse/validation failures (bad/missing JSON fields).
-        raise PatchGenerationError(
-            f"The model's response could not be used: {_short(str(exc))}. "
-            "Try again or pick a different model."
-        ) from exc
-    except Exception as exc:
-        # litellm/provider failures — invalid model, auth, rate limit, network, etc.
-        log.warning("LLM call failed: %s", exc)
-        raise PatchGenerationError(_friendly_llm_error(exc, effective_model)) from exc
+    session = ToneSession(api_key=api_key, model=model, timeout=timeout)
+    return session.generate(artist, song, extra=extra, on_progress=on_progress)

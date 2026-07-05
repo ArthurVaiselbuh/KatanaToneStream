@@ -1,5 +1,6 @@
 """GenerateDialog — LLM-powered tone generator modal."""
 
+import json
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -15,7 +16,7 @@ from ..katana_catalog import (
     REVERB_TYPES,
     variation_for_preamp,
 )
-from ..llm_generator import PatchGenerationError, generate_patch
+from ..llm_generator import ChatEntry, PatchGenerationError, ToneSession
 from ..llm_providers import configured_providers, list_models
 from ..models import KatanaPatch, PatchMeta
 from ..patch_builder import build_raw_bytes, get_template, to_alb_bytes
@@ -88,6 +89,9 @@ class GenerateDialog:
         self._midi = midi
         self._on_save = on_save
         self._models_cache: dict[str, list[str]] = {}
+        self._session: ToneSession | None = None
+        self._pending_row: ft.Row | None = None
+        self._pending_spinner: ft.ProgressRing | None = None
 
         # ── LLM engine pickers ────────────────────────────────────────────────
         self._provider_dd = theme.dropdown("LLM provider", on_select=self._on_provider_change)
@@ -109,6 +113,39 @@ class GenerateDialog:
             multiline=True,
             min_lines=1,
             max_lines=3,
+        )
+
+        # ── Refinement chat ───────────────────────────────────────────────────
+        self._chat_list = ft.Column(
+            [], spacing=8, tight=True, scroll=ft.ScrollMode.AUTO, auto_scroll=True
+        )
+        self._chat_input = theme.text_field(
+            hint_text="Ask for a tweak",
+            multiline=True,
+            shift_enter=True,
+            min_lines=1,
+            max_lines=4,
+            on_submit=self._on_send,
+            expand=True,
+        )
+        self._send_btn = ft.IconButton(
+            ft.Icons.SEND,
+            icon_color=theme.AMBER,
+            tooltip="Send",
+            on_click=self._on_send,
+        )
+        self._new_btn = ft.IconButton(
+            ft.Icons.ADD_COMMENT_OUTLINED,
+            icon_color=theme.TEXT_DIM,
+            tooltip="New tone",
+            on_click=lambda e: self._show_form(),
+        )
+        self._back_to_chat_btn = ft.IconButton(
+            ft.Icons.FORUM_OUTLINED,
+            icon_color=theme.AMBER,
+            tooltip="Back to the conversation",
+            visible=False,
+            on_click=lambda e: self._show_chat(),
         )
 
         # ── Amp section ───────────────────────────────────────────────────────
@@ -183,12 +220,57 @@ class GenerateDialog:
             ),
         )
 
+        self._form_view = ft.Column(
+            [
+                ft.Row([self._artist, self._song], spacing=10),
+                self._notes,
+                ft.Row(
+                    [self._back_to_chat_btn, self._gen_btn],
+                    alignment=ft.MainAxisAlignment.END,
+                    spacing=8,
+                ),
+            ],
+            spacing=10,
+            tight=True,
+        )
+        self._chat_view = ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text(
+                            "Refine the tone",
+                            size=11,
+                            weight=ft.FontWeight.W_600,
+                            color=theme.TEXT_DIM,
+                            expand=True,
+                        ),
+                        self._new_btn,
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Container(
+                    self._chat_list,
+                    height=280,
+                    padding=ft.Padding.all(8),
+                    border=ft.Border.all(1, theme.BORDER_DIM),
+                    border_radius=8,
+                ),
+                ft.Row(
+                    [self._chat_input, self._send_btn],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.END,
+                ),
+            ],
+            spacing=8,
+            tight=True,
+            visible=False,
+        )
+
         content = ft.Column(
             [
                 ft.Row([self._provider_dd, self._model_dd], spacing=10),
-                ft.Row([self._artist, self._song], spacing=10),
-                self._notes,
-                ft.Row([self._gen_btn], alignment=ft.MainAxisAlignment.END),
+                self._form_view,
+                self._chat_view,
                 self._progress,
                 ft.Row(
                     [self._status, self._confidence],
@@ -276,6 +358,11 @@ class GenerateDialog:
     def open(self) -> None:
         self._models_cache.clear()
         self._populate_providers()
+        # An existing conversation survives closing the dialog; resume it.
+        if self._session is not None:
+            self._show_chat()
+        else:
+            self._show_form()
         self._page.show_dialog(self._dialog)
         if self._provider_dd.value:
             self._fetch_models_for(self._provider_dd.value)
@@ -286,6 +373,11 @@ class GenerateDialog:
     # ── LLM engine selection ────────────────────────────────────────────────
 
     def _populate_providers(self) -> None:
+        # Keep Generate disabled until a model is actually available (set in
+        # _fetch_models_for) so it can't be fired before the model list loads.
+        # Also reset a stale "Generating…" label left by a prior hung run.
+        self._gen_btn.disabled = True
+        self._gen_btn.text = "Generate"
         configured = configured_providers()
         self._provider_dd.options = [
             ft.dropdown.Option(key=k, text=label) for label, k in configured
@@ -310,6 +402,8 @@ class GenerateDialog:
     def _fetch_models_for(self, provider: str) -> None:
         self._model_dd.options = []
         self._model_dd.value = None
+        # Block Generate while the list loads (also covers switching provider).
+        self._gen_btn.disabled = True
         self._set_status(f"Fetching models for {provider}…")
 
         def _run():
@@ -328,6 +422,8 @@ class GenerateDialog:
             # Editable dropdown shows .text in its field; keep it in sync with .value
             # (option key == text == model string here) so the default is visible.
             self._model_dd.text = selected or ""
+            # Only allow Generate once a model is actually selectable.
+            self._gen_btn.disabled = selected is None
             if models:
                 self._set_status("")
             else:
@@ -349,6 +445,195 @@ class GenerateDialog:
         self._status.value = msg
         self._status.color = theme.AMBER
         self._page.update()
+
+    # ── Refinement chat ───────────────────────────────────────────────────────
+
+    def _show_form(self) -> None:
+        self._form_view.visible = True
+        self._chat_view.visible = False
+        self._back_to_chat_btn.visible = self._session is not None
+        self._page.update()
+
+    def _show_chat(self) -> None:
+        self._form_view.visible = False
+        self._chat_view.visible = True
+        self._page.update()
+
+    def _on_chat_request(self, entry: ChatEntry) -> None:
+        """Session callback — a user turn was just dispatched to the provider."""
+        self._add_pending_bubble(entry)
+        self._page.update()
+
+    def _on_chat_entry(self, entry: ChatEntry) -> None:
+        """Session callback — runs on the generate/refine worker thread."""
+        # The user turn is already on screen as the pending bubble — keep it
+        # (spinner off) rather than adding a duplicate.
+        if entry.role == "user" and self._pending_row is not None:
+            self._resolve_pending_bubble(keep=True)
+        else:
+            self._add_bubble(entry)
+        self._page.update()
+
+    def _add_pending_bubble(self, entry: ChatEntry) -> None:
+        """User bubble shown the moment a turn is sent, with a spinner while waiting."""
+        spinner = ft.ProgressRing(width=14, height=14, stroke_width=2, color=theme.AMBER)
+        if entry.auto:
+            bubble = self._collapsed_bubble(entry)
+        else:
+            text = entry.display or entry.content
+            bubble = ft.Container(
+                ft.Text(text, size=12, color="#E5E7EB", selectable=True),
+                bgcolor="#3B2A12",
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                border_radius=10,
+                width=420 if (len(text) > 55 or "\n" in text) else None,
+            )
+        self._pending_spinner = spinner
+        self._pending_row = ft.Row(
+            [spinner, bubble],
+            alignment=ft.MainAxisAlignment.END,
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        self._chat_list.controls.append(self._pending_row)
+
+    def _resolve_pending_bubble(self, keep: bool) -> None:
+        if self._pending_row is None:
+            return
+        if keep:
+            self._pending_spinner.visible = False
+        elif self._pending_row in self._chat_list.controls:
+            self._chat_list.controls.remove(self._pending_row)
+        self._pending_row = None
+        self._pending_spinner = None
+
+    def _add_bubble(self, entry: ChatEntry) -> None:
+        is_user = entry.role == "user"
+        if entry.auto:
+            bubble = self._collapsed_bubble(entry)
+        else:
+            text = entry.display or entry.content
+            body = [ft.Text(text, size=12, color="#E5E7EB", selectable=True)]
+            # An assistant reply whose display (the "message") differs from its
+            # raw content is a refine JSON reply — offer to reveal the JSON.
+            if not is_user and entry.display and entry.display != entry.content:
+                body.append(self._json_expander(entry.content))
+            bubble = ft.Container(
+                ft.Column(body, spacing=6, tight=True),
+                bgcolor="#3B2A12" if is_user else theme.CARD_BG,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                border_radius=10,
+                # Fixed width forces long text to wrap; short messages size to fit.
+                width=420 if (len(text) > 55 or "\n" in text or len(body) > 1) else None,
+            )
+        self._chat_list.controls.append(
+            ft.Row(
+                [bubble],
+                alignment=ft.MainAxisAlignment.END if is_user else ft.MainAxisAlignment.START,
+            )
+        )
+
+    def _json_expander(self, raw: str) -> ft.Column:
+        """A 'Show JSON' toggle revealing the model's raw reply, pretty-printed."""
+        try:
+            pretty = json.dumps(json.loads(raw), indent=2)
+        except (json.JSONDecodeError, TypeError):
+            pretty = raw
+        json_text = ft.Text(
+            pretty,
+            size=11,
+            color=theme.TEXT_DIM,
+            selectable=True,
+            font_family="monospace",
+            visible=False,
+        )
+        label = ft.Text("Show JSON", size=11, italic=True, color=theme.AMBER)
+        toggle = ft.Row(
+            [ft.Icon(ft.Icons.DATA_OBJECT, size=12, color=theme.AMBER), label],
+            spacing=4,
+            tight=True,
+        )
+
+        def _toggle(e):
+            json_text.visible = not json_text.visible
+            label.value = "Hide JSON" if json_text.visible else "Show JSON"
+            self._page.update()
+
+        return ft.Column(
+            [ft.GestureDetector(toggle, on_tap=_toggle), json_text], spacing=6, tight=True
+        )
+
+    def _collapsed_bubble(self, entry: ChatEntry) -> ft.Container:
+        """Automatic prompt as a compact bubble; tapping toggles the full text."""
+        full = ft.Text(entry.content, size=11, color=theme.TEXT_DIM, selectable=True, visible=False)
+        header = ft.Row(
+            [
+                ft.Icon(ft.Icons.UNFOLD_MORE, size=12, color=theme.TEXT_DIM),
+                ft.Text(
+                    entry.label or "Automatic prompt",
+                    size=11,
+                    italic=True,
+                    color=theme.TEXT_DIM,
+                ),
+            ],
+            spacing=4,
+            tight=True,
+        )
+        container = ft.Container(
+            ft.Column([header, full], spacing=6, tight=True),
+            bgcolor="#2A2114",
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+            border_radius=10,
+        )
+
+        def _toggle(e):
+            full.visible = not full.visible
+            container.width = 440 if full.visible else None
+            self._page.update()
+
+        container.on_click = _toggle
+        return container
+
+    def _add_chat_note(self, text: str) -> None:
+        self._chat_list.controls.append(
+            ft.Row(
+                [ft.Text(text, size=11, italic=True, color=theme.AMBER)],
+                alignment=ft.MainAxisAlignment.CENTER,
+            )
+        )
+
+    def _on_send(self, e=None) -> None:
+        text = (self._chat_input.value or "").strip()
+        if not text or self._session is None:
+            return
+        self._chat_input.value = ""
+        self._chat_input.disabled = True
+        self._send_btn.disabled = True
+        self._set_status("")
+
+        def _run():
+            try:
+                # The pending user bubble arrives via on_request as soon as refine
+                # dispatches; the assistant bubble via on_entry on success.
+                _, partial = self._session.refine(text, self._current_params())
+                if partial:
+                    self._apply_params({**self._current_params(), **partial})
+                    self._add_chat_note("Updated: " + ", ".join(partial))
+            except PatchGenerationError as exc:
+                self._resolve_pending_bubble(keep=False)
+                self._chat_input.value = text  # let the user retry the same message
+                self._set_status(str(exc), error=True)
+            except Exception as exc:
+                log.exception("Unexpected error during refinement")
+                self._resolve_pending_bubble(keep=False)
+                self._chat_input.value = text
+                self._set_status(f"Unexpected error: {exc}", error=True)
+            finally:
+                self._chat_input.disabled = False
+                self._send_btn.disabled = False
+                self._page.update()
+
+        self._page.run_thread(_run)
 
     def _current_params(self) -> dict:
         return {
@@ -453,15 +738,28 @@ class GenerateDialog:
         self._progress.visible = True
         self._set_status("")
 
+        # Generate starts a fresh conversation — this is the point where any
+        # previous session's history is discarded.
+        self._chat_list.controls.clear()
+        self._pending_row = None
+        self._pending_spinner = None
+        session = ToneSession(
+            api_key=config.llm_api_key(provider),
+            model=model,
+            timeout=config.llm_timeout(),
+            on_entry=self._on_chat_entry,
+            on_request=self._on_chat_request,
+        )
+        self._session = session
+        self._show_chat()
+
         def _run():
             try:
-                result = generate_patch(
+                result = session.generate(
                     artist=artist,
                     song=song,
-                    api_key=config.llm_api_key(provider),
-                    model=model,
-                    on_progress=self._on_progress,
                     extra=extra,
+                    on_progress=self._on_progress,
                 )
                 config.set_default_llm(provider, model)
                 self._apply_params(result)
@@ -486,6 +784,7 @@ class GenerateDialog:
                 self._page.update()
             except PatchGenerationError as exc:
                 # Already a clear, user-facing message.
+                self._resolve_pending_bubble(keep=False)
                 self._gen_btn.disabled = False
                 self._gen_btn.text = "Generate"
                 self._progress.visible = False
@@ -493,6 +792,7 @@ class GenerateDialog:
                 self._page.update()
             except Exception as exc:
                 log.exception("Unexpected error during patch generation")
+                self._resolve_pending_bubble(keep=False)
                 self._gen_btn.disabled = False
                 self._gen_btn.text = "Generate"
                 self._progress.visible = False

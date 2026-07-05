@@ -29,14 +29,21 @@ class SettingsPane:
         self._on_amp_model_changed = on_amp_model_changed
 
         # ── Amp model ─────────────────────────────────────────────────────────
-        self._amp_model = theme.dropdown(
-            "Katana model",
-            options=[
-                ft.dropdown.Option(key=k, text=v) for k, v in katana_channels.MODEL_LABELS.items()
-            ],
-            value=amp_model(),
-            on_select=self._amp_model_select,
-        )
+        # Toggle buttons, not a Dropdown: a Dropdown placed in this always-present
+        # pane crashes Flet's full-page auto-update diff (its Option keys enter the
+        # keyed-list reconciliation path). Buttons only mutate their own style on
+        # select, mirroring SlotPicker.
+        self._amp_selected = amp_model()
+        self._amp_buttons: dict[str, ft.TextButton] = {
+            key: ft.TextButton(
+                f"{key} W",
+                tooltip=label,
+                on_click=lambda e, k=key: self._amp_model_select(k),
+            )
+            for key, label in katana_channels.MODEL_LABELS.items()
+        }
+        self._refresh_amp_buttons()
+        amp_row = ft.Row(list(self._amp_buttons.values()), spacing=8, tight=True)
         self._amp_status = ft.Text("", size=12, color=theme.AMBER)
 
         # ── ToneExchange ──────────────────────────────────────────────────────
@@ -115,7 +122,7 @@ class SettingsPane:
                         size=11,
                         color=theme.TEXT_DIM,
                     ),
-                    self._amp_model,
+                    amp_row,
                     self._amp_status,
                     ft.Divider(height=1, color=theme.BORDER_DIM),
                     ft.Text(
@@ -160,7 +167,8 @@ class SettingsPane:
         self._page.update()
 
     def _load_fields(self) -> None:
-        self._amp_model.value = amp_model()
+        self._amp_selected = amp_model()
+        self._refresh_amp_buttons()
         self._amp_status.value = ""
         username, password = toneexchange_credentials()
         self._username.value = username
@@ -170,12 +178,23 @@ class SettingsPane:
             field.value = llm_api_key(provider)
         self._llm_status.value = ""
 
-    def _amp_model_select(self, e) -> None:
-        model = self._amp_model.value or katana_channels.DEFAULT_MODEL
-        set_amp_model(model)
-        self._on_amp_model_changed(model)
-        self._amp_status.value = f"Saved — target picker updated ({model} W)."
+    def _amp_model_select(self, key: str) -> None:
+        self._amp_selected = katana_channels.normalize_model(key)
+        set_amp_model(self._amp_selected)
+        self._on_amp_model_changed(self._amp_selected)
+        self._refresh_amp_buttons()
+        self._amp_status.value = f"Saved — target picker updated ({self._amp_selected} W)."
         self._page.update()
+
+    def _refresh_amp_buttons(self) -> None:
+        for key, btn in self._amp_buttons.items():
+            active = key == self._amp_selected
+            btn.style = ft.ButtonStyle(
+                color=theme.AMBER if active else "#FFFFFF",
+                bgcolor=theme.AMBER_DARK if active else "transparent",
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding.symmetric(horizontal=14, vertical=8),
+            )
 
     def _te_save(self, e) -> None:
         username = (self._username.value or "").strip()

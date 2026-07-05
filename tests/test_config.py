@@ -64,6 +64,26 @@ def test_set_amp_model_normalizes_before_saving(app_home):
     assert config.get("midi", "amp_model") == "100"
 
 
+def test_llm_timeout_default(app_home):
+    _write_config(app_home, "")
+    assert config.llm_timeout() == 120.0
+
+
+def test_llm_timeout_from_config(app_home):
+    _write_config(app_home, "[llm]\ntimeout_seconds = 45\n")
+    assert config.llm_timeout() == 45.0
+
+
+def test_llm_timeout_junk_falls_back(app_home):
+    _write_config(app_home, "[llm]\ntimeout_seconds = soon\n")
+    assert config.llm_timeout() == 120.0
+
+
+def test_llm_timeout_nonpositive_falls_back(app_home):
+    _write_config(app_home, "[llm]\ntimeout_seconds = 0\n")
+    assert config.llm_timeout() == 120.0
+
+
 def test_missing_key_returns_minus_one(app_home):
     _write_config(app_home, "[midi]\n")
     assert config.midi_target_patch() == -1

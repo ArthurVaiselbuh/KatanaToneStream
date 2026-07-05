@@ -76,8 +76,20 @@ Strict layering, UI-free core so the flow is testable without Flet or a real amp
 - **`katana_channels.py`** — pure data: the amp's real MIDI PC→channel recall map per
   model, grouped by bank (100 W: A/B × CH-1..4, 50 W: A/B × CH-1..2), with Tone
   Studio channel names. See MIDI notes below.
-- **`llm_generator.py`** — `generate_patch(...)`, a pure (no Flet) three-phase LLM
-  conversation (character → type selection → parameter values) returning a merged dict.
+- **`llm_generator.py`** — pure (no Flet) LLM logic. `ToneSession` holds one growing
+  conversation used for both generation and refinement: the three-phase `generate()`
+  (character → type selection → parameter values) sends each phase as its own turn and
+  keeps the model's analysis/choices as real `assistant` messages in context (never
+  pasted back into later prompts), returning a merged dict. `refine()` then continues
+  the same thread chat-style. One shared system prompt governs the whole conversation;
+  each user turn states its own output format (prose vs. a raw JSON object). Providers
+  are stateless, so the full message list is re-sent every call — which also keeps the
+  option catalogs (sent once, in the type turn) available for later `*_type` changes.
+  Refine replies are JSON `{"message": <shown to user>, "params": <optional partial
+  field updates, snapped/clamped>}`. Every turn is recorded as a `ChatEntry`
+  (`auto`/`label`/`display` metadata drives the chat UI's collapsed prompt bubbles), and
+  committed only after a successful reply so a failed call is safe to retry.
+  `generate_patch(...)` is a one-shot wrapper around a throwaway session.
 - **`patch_builder.py`** — `build_raw_bytes()` deep-copies a base template and overwrites
   only known byte positions (named constants in the module); `get_template()` returns the
   bundled clean Tone Studio base, falling back to a cached patch if missing.

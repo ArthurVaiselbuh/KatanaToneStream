@@ -72,6 +72,21 @@ def set_amp_model(model: str) -> None:
     _set_ini_value("midi", "amp_model", katana_channels.normalize_model(model))
 
 
+def llm_timeout() -> float:
+    """Per-call LLM request timeout in seconds; default 120.
+
+    Bounds a hung provider (e.g. a local Ollama model that never finishes
+    loading) so generation fails cleanly instead of blocking forever. Override
+    with ``[llm] timeout_seconds`` in config.ini.
+    """
+    raw = get("llm", "timeout_seconds", fallback="120").strip()
+    try:
+        val = float(raw)
+    except ValueError:
+        return 120.0
+    return val if val > 0 else 120.0
+
+
 def midi_target_patch() -> int:
     """Return the default target channel as a MIDI PC number, or -1 for TONE-only.
 
