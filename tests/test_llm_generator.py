@@ -295,6 +295,66 @@ def _generated_session(mock_completion, extra_responses=()):
     return session
 
 
+def test_system_message_carries_catalogs_and_ranges():
+    from katana_tonestream.katana_catalog import PREAMP_TYPES
+
+    system = ToneSession(api_key="", model="openai/gpt-4o").api_messages()[0]
+    assert system["role"] == "system"
+    # Every catalog entry is listed id=name, and the field ranges are stated,
+    # so a session can start with refine() (free mode) with nothing else sent.
+    for key, name in PREAMP_TYPES.items():
+        assert f"{key}={name}" in system["content"]
+    assert "preamp_gain" in system["content"]
+    assert "0-120" in system["content"]
+
+
+@patch("litellm.completion")
+def test_refine_works_as_first_turn(mock_completion):
+    # Free mode: the user describes a tone with no generation phases beforehand.
+    mock_completion.side_effect = [
+        _refine_response("Warm jazz tone set up", {"preamp_type": 0, "reverb_on": True})
+    ]
+    session = ToneSession(api_key="", model="openai/gpt-4o")
+    msg, partial = session.refine("warm jazz clean with a touch of reverb", {"preamp_gain": 50})
+
+    assert msg == "Warm jazz tone set up"
+    assert partial == {"preamp_type": 0, "reverb_on": True}
+    msgs = mock_completion.call_args.kwargs["messages"]
+    assert [m["role"] for m in msgs] == ["system", "user"]
+    assert "warm jazz clean" in msgs[-1]["content"]
+
+
+@patch("litellm.completion")
+def test_first_turn_demands_complete_params_later_turns_a_diff(mock_completion):
+    # The opening free-mode turn must not diff against the meaningless current
+    # dials — it asks for every field. Subsequent turns ask for a minimal diff.
+    mock_completion.side_effect = [
+        _refine_response("Set up", {"preamp_type": 0}),
+        _refine_response("Brighter", {"treble": 70}),
+    ]
+    session = ToneSession(api_key="", model="openai/gpt-4o")
+    session.refine("warm jazz clean", {"preamp_gain": 50})
+    session.refine("brighter", {"preamp_gain": 50})
+
+    first_prompt = mock_completion.call_args_list[0].kwargs["messages"][-1]["content"]
+    second_prompt = mock_completion.call_args_list[1].kwargs["messages"][-1]["content"]
+    assert "EVERY adjustable field" in first_prompt
+    assert "EVERY adjustable field" not in second_prompt
+    assert "Change only the fields the request calls for" in second_prompt
+
+
+@patch("litellm.completion")
+def test_refine_after_generate_asks_for_a_diff(mock_completion):
+    # After generation the dials ARE a coherent tone, so even the first chat
+    # message must get the minimal-diff scope, not the build-from-scratch one.
+    session = _generated_session(mock_completion, [_refine_response("Done", {"treble": 70})])
+    session.refine("brighter", {"preamp_gain": 50})
+
+    prompt = mock_completion.call_args.kwargs["messages"][-1]["content"]
+    assert "EVERY adjustable field" not in prompt
+    assert "Change only the fields the request calls for" in prompt
+
+
 @patch("litellm.completion")
 def test_session_generate_records_history(mock_completion):
     entries_seen = []

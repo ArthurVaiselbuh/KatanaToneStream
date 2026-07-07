@@ -3,6 +3,8 @@
 Public API:
   ToneSession — holds one LLM conversation: generate() runs the 3-phase
     creation flow, refine() continues it chat-style with partial param updates.
+    refine() also works from turn one (free mode: the user describes the tone
+    directly) since the system message carries the catalogs and field ranges.
   generate_patch(artist, song, api_key, model, ...) -> dict — one-shot wrapper
     around a throwaway ToneSession, kept for callers that don't need refinement.
 
@@ -47,25 +49,47 @@ class PatchGenerationError(Exception):
 # ---------------------------------------------------------------------------
 
 # A single system prompt governs the whole multi-step conversation (generation
-# phases and refinement alike); each user turn states the output format it needs
-# — prose vs. a raw JSON object — so there is no per-phase system prompt.
+# phases, free chat, and refinement alike); each user turn states the output
+# format it needs — prose vs. a raw JSON object — so there is no per-phase
+# system prompt. The Katana reference below is appended to it (_SYSTEM_FULL),
+# putting the catalogs and ranges in context from the very first turn.
 _SYSTEM = """\
 You are a guitar tone expert who knows the Boss Katana Mk2 inside out, along with the amps
-and pedals famous guitarists use. You work with the user in one ongoing conversation: first
-you recreate a tone in three steps (analyze its character, pick amp/effect types, dial in
-settings), then you refine it from the user's feedback until it sounds right to them.
+and pedals famous guitarists use. You work with the user in one ongoing conversation: they
+either name an artist and song whose tone you recreate in three steps (analyze its character,
+pick amp/effect types, dial in settings), or simply describe the tone they want. Either way,
+you then refine the tone from their feedback until it sounds right to them.
 
-Refinement requests describe how the tone should SOUND, often vaguely ("brighter", "too
+Tone requests describe how the tone should SOUND, often vaguely ("brighter", "too
 muddy", "more 80s"). Translate them into concrete parameter moves: brightness lives in
 treble and presence; mud in bass and gain; aggression and sustain in preamp gain and OD
 drive; space and depth in delay/reverb levels; character shifts may need a different preamp,
-pedal, or effect type (pick ids from the catalogs given earlier in this conversation).
+pedal, or effect type (pick ids from the catalogs in the reference below).
 If a request is ambiguous, pick the most likely
 interpretation and say briefly what you assumed.
 
 Draw on the whole conversation so far, and follow the output format each message asks
 for exactly: plain prose when asked to analyze, otherwise a single raw JSON object with no
 markdown and no code fences.
+"""
+
+# Machine-readable Katana reference appended to the system prompt. Living in the
+# system message (re-sent on every call anyway) means both flows — 3-phase
+# generation and free chat — have the catalogs and field ranges available on
+# every turn without any prompt restating them.
+_SYSTEM_REFERENCE = """\
+Boss Katana Mk2 reference — every *_type id must come from these catalogs (id=name):
+Preamp: {preamp_options}
+Booster/OD: {od_options}
+FX slots (fx1, fx2): {fx_options}
+Delay: {delay_options}
+Reverb: {reverb_options}
+
+Adjustable fields: preamp_type, od_type, fx1_type, fx2_type, delay_type, reverb_type
+(catalog ids); preamp_gain, od_drive, delay_level 0-120; bass, mid, treble, presence,
+od_level, reverb_level 0-100 (EQ at 50 = flat); od_on, fx1_on, fx2_on, delay_on,
+reverb_on booleans. od_drive is the booster/overdrive pedal's gain and od_level its
+output level; delay_level and reverb_level are effect mix levels.
 """
 
 # Turn 1 — free-form analysis. Artist/song and the user's extra request live here
@@ -80,21 +104,15 @@ are audibly active: booster/overdrive, modulation/FX, delay, and reverb. Mention
 amps and pedals this artist is known for using. Write plainly — no JSON, no headings.
 """
 
-# Turn 2 — type selection. Your analysis is already in the conversation, so it is
-# referred to, not pasted back in.
+# Turn 2 — type selection. Your analysis is already in the conversation and the
+# catalogs are in the system reference, so neither is pasted back in.
 _PROMPT_TYPES = """\
-Using your analysis above, choose the best Boss Katana Mk2 option for each slot. Even if a
-slot would be switched off in the final tone, still pick the most plausible type.
+Using your analysis above, choose the best Boss Katana Mk2 option for each slot from the
+catalogs in the system reference. Even if a slot would be switched off in the final tone,
+still pick the most plausible type.
 
 Reply with ONLY a JSON object with these integer fields: preamp_type, od_type, fx1_type,
 fx2_type, delay_type, reverb_type.
-
-Pick each id from its catalog (id=name):
-Preamp: {preamp_options}
-Booster/OD: {od_options}
-FX slots (fx1, fx2): {fx_options}
-Delay: {delay_options}
-Reverb: {reverb_options}
 """
 
 # Turn 3 — dial settings. The chosen type ids are already in the conversation; we
@@ -128,23 +146,35 @@ reverb_level are the effect mix levels. EQ at 50 = flat. confidence reflects how
 tone is documented.
 """
 
-# Refine turns continue the same conversation — the model already holds the full
-# tone and the option catalogs in context. We pass the live settings because the
-# user may have nudged dials by hand since the last message.
+# Chat turns — refinements or free-mode tone requests — continue the same
+# conversation. We pass the live settings because the user may have nudged dials
+# by hand since the last message. The scope line differs on the very first turn
+# of a session: there the current settings are leftovers with no meaning, so a
+# requested tone must be defined completely rather than diffed against them.
 _PROMPT_REFINE = """\
 Current Katana settings:
 {params_json}
 
 User request: {message}
 
-Adjust the settings to satisfy the request, changing as few fields as possible. Use the option
-catalogs from earlier in this conversation for any *_type change.
+{scope}
 
 Reply with ONLY a JSON object of this shape:
-{{"message": "<briefly explain what you changed and why>",
- "params": {{<only the fields you change>}}}}
-Omit "params" (or leave it empty) if nothing should change.
+{{"message": "<briefly explain what you did and why>",
+ "params": {{<only the fields you include>}}}}
+Omit "params" (or leave it empty) if no settings should change.
 """
+
+_REFINE_SCOPE_ONGOING = """\
+Update the settings to satisfy the request, using the catalogs and field ranges from the
+system reference. Change only the fields the request calls for: a small tweak should touch
+few fields, while a bigger change of direction may set many."""
+
+_REFINE_SCOPE_FIRST = """\
+This is the first message of the conversation, so the current settings are just leftovers —
+do not treat them as a starting tone. If the request describes a tone, build it from scratch
+and include EVERY adjustable field from the system reference in params: all six *_type ids,
+every dial, and every on/off switch. If the message is only a question, just answer it."""
 
 # Appended to nudge a provider that replied with non-JSON on a structured turn.
 _JSON_CORRECTION = (
@@ -163,6 +193,21 @@ _LABEL_VALUES = "Phase 3/3 — dial in settings"
 
 def _catalog_str(mapping: dict[int, str]) -> str:
     return ", ".join(f"{k}={v}" for k, v in mapping.items())
+
+
+# The complete system message every session is seeded with. Catalogs are static,
+# so this is built once at import time.
+_SYSTEM_FULL = (
+    _SYSTEM
+    + "\n"
+    + _SYSTEM_REFERENCE.format(
+        preamp_options=_catalog_str(PREAMP_TYPES),
+        od_options=_catalog_str(OD_TYPES),
+        fx_options=_catalog_str(FX_TYPES),
+        delay_options=_catalog_str(DELAY_TYPES),
+        reverb_options=_catalog_str(REVERB_TYPES),
+    )
+)
 
 
 def _extra_block(extra: str) -> str:
@@ -392,14 +437,18 @@ class ChatEntry:
 
 
 class ToneSession:
-    """One LLM conversation: 3-phase generation, then free-form refinement.
+    """One LLM conversation about a Katana tone, with two ways in.
 
-    Generation and refinement are turns of a *single* growing conversation. The
-    model's own analysis and choices are real ``assistant`` messages that stay in
-    context, instead of being pasted back into later prompts as text. Providers are
-    stateless, so the whole message list is re-sent on every call — which is also
-    what keeps the option catalogs (sent once, in the type-selection turn) available
-    for later ``*_type`` changes during refinement.
+    Either ``generate()`` runs the 3-phase creation flow and ``refine()`` continues
+    it chat-style, or — free mode — ``refine()`` is called from turn one and the
+    user simply describes the tone they want. Both work because the system message
+    (``_SYSTEM_FULL``) carries the Katana reference: the option catalogs and field
+    ranges are in context on every turn of every session.
+
+    All turns extend a *single* growing conversation. The model's own analysis and
+    choices are real ``assistant`` messages that stay in context, instead of being
+    pasted back into later prompts as text. Providers are stateless, so the whole
+    message list is re-sent on every call.
 
     Model and API key are fixed at construction; the UI creates a fresh session per
     Generate click. ``on_request`` (if given) fires with the user ``ChatEntry`` the
@@ -424,7 +473,7 @@ class ToneSession:
         self._timeout = timeout
         self._on_entry = on_entry
         self._on_request = on_request
-        self._messages: list[dict] = [{"role": "system", "content": _SYSTEM}]
+        self._messages: list[dict] = [{"role": "system", "content": _SYSTEM_FULL}]
         self.history: list[ChatEntry] = []
 
     def api_messages(self) -> list[dict]:
@@ -540,14 +589,7 @@ class ToneSession:
         return text
 
     def _phase_types(self) -> dict:
-        prompt = _PROMPT_TYPES.format(
-            preamp_options=_catalog_str(PREAMP_TYPES),
-            od_options=_catalog_str(OD_TYPES),
-            fx_options=_catalog_str(FX_TYPES),
-            delay_options=_catalog_str(DELAY_TYPES),
-            reverb_options=_catalog_str(REVERB_TYPES),
-        )
-        data = self._ask_json(prompt, _TYPES_SCHEMA, "katana_types", label=_LABEL_TYPES)
+        data = self._ask_json(_PROMPT_TYPES, _TYPES_SCHEMA, "katana_types", label=_LABEL_TYPES)
         log.debug("LLM phase 2/3 (types) parsed response: %s", data)
         for key in ("preamp_type", "od_type", "fx1_type", "fx2_type", "delay_type", "reverb_type"):
             if key not in data:
@@ -673,6 +715,12 @@ class ToneSession:
     def refine(self, user_message: str, current_params: dict) -> tuple[str, dict | None]:
         """Continue the conversation with a chat message; return (reply, partial params).
 
+        Also valid as the *first* turn of a fresh session (free mode) — the system
+        reference supplies the catalogs and ranges, so no generation phases are
+        required beforehand. On that first turn the prompt demands a complete param
+        set for a requested tone (the current settings are meaningless leftovers);
+        on later turns it asks for a minimal diff.
+
         ``current_params`` is a snapshot of the UI controls so manual tweaks made
         between messages are visible to the model. The whole conversation is already
         the message history, so only the new turn is added. The partial params dict
@@ -680,9 +728,11 @@ class ToneSession:
         the current settings. Raises PatchGenerationError on any failure.
         """
         user_message = user_message.strip()
+        first_turn = not self.history
         prompt = _PROMPT_REFINE.format(
             params_json=json.dumps(current_params, indent=2),
             message=user_message,
+            scope=_REFINE_SCOPE_FIRST if first_turn else _REFINE_SCOPE_ONGOING,
         )
         log.debug("LLM refine prompt:\n%s", prompt)
         try:
@@ -701,6 +751,9 @@ class ToneSession:
                 raise ValueError("Refine reply is missing 'message'")
             raw_params = data.get("params")
             partial = _validate_partial_params(raw_params) if isinstance(raw_params, dict) else {}
+            if first_turn and partial and len(partial) < len(_PARAM_SPECS):
+                missing = sorted(set(_PARAM_SPECS) - set(partial))
+                log.warning("First-turn tone reply is missing fields: %s", ", ".join(missing))
             log.debug("LLM refine validated partial params: %s", partial)
             return message, (partial or None)
         except ValueError as exc:

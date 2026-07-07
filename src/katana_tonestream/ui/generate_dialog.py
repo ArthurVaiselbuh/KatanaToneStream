@@ -197,6 +197,17 @@ class GenerateDialog:
             self._on_generate,
             icon=ft.Icons.AUTO_AWESOME,
         )
+        self._free_btn = ft.OutlinedButton(
+            "Free chat",
+            icon=ft.Icons.CHAT_OUTLINED,
+            on_click=self._on_free_chat,
+            tooltip="Skip artist/song — describe the tone you want directly",
+            style=ft.ButtonStyle(
+                color={ft.ControlState.DEFAULT: theme.AMBER},
+                shape=ft.RoundedRectangleBorder(radius=20),
+                padding=ft.Padding.symmetric(horizontal=20, vertical=14),
+            ),
+        )
         self._apply_btn = ft.ElevatedButton(
             "Apply to amp",
             icon=ft.Icons.SEND,
@@ -225,7 +236,7 @@ class GenerateDialog:
                 ft.Row([self._artist, self._song], spacing=10),
                 self._notes,
                 ft.Row(
-                    [self._back_to_chat_btn, self._gen_btn],
+                    [self._back_to_chat_btn, self._free_btn, self._gen_btn],
                     alignment=ft.MainAxisAlignment.END,
                     spacing=8,
                 ),
@@ -378,6 +389,7 @@ class GenerateDialog:
         # Also reset a stale "Generating…" label left by a prior hung run.
         self._gen_btn.disabled = True
         self._gen_btn.text = "Generate"
+        self._free_btn.disabled = True
         configured = configured_providers()
         self._provider_dd.options = [
             ft.dropdown.Option(key=k, text=label) for label, k in configured
@@ -404,6 +416,7 @@ class GenerateDialog:
         self._model_dd.value = None
         # Block Generate while the list loads (also covers switching provider).
         self._gen_btn.disabled = True
+        self._free_btn.disabled = True
         self._set_status(f"Fetching models for {provider}…")
 
         def _run():
@@ -424,6 +437,7 @@ class GenerateDialog:
             self._model_dd.text = selected or ""
             # Only allow Generate once a model is actually selectable.
             self._gen_btn.disabled = selected is None
+            self._free_btn.disabled = selected is None
             if models:
                 self._set_status("")
             else:
@@ -734,6 +748,7 @@ class GenerateDialog:
 
         self._gen_btn.disabled = True
         self._gen_btn.text = "Generating…"
+        self._free_btn.disabled = True
         self._confidence.visible = False
         self._progress.visible = True
         self._set_status("")
@@ -779,6 +794,7 @@ class GenerateDialog:
                 self._confidence.visible = True
                 self._gen_btn.disabled = False
                 self._gen_btn.text = "Generate"
+                self._free_btn.disabled = False
                 self._progress.visible = False
                 self._set_status("")
                 self._page.update()
@@ -787,6 +803,7 @@ class GenerateDialog:
                 self._resolve_pending_bubble(keep=False)
                 self._gen_btn.disabled = False
                 self._gen_btn.text = "Generate"
+                self._free_btn.disabled = False
                 self._progress.visible = False
                 self._set_status(str(exc), error=True)
                 self._page.update()
@@ -795,11 +812,37 @@ class GenerateDialog:
                 self._resolve_pending_bubble(keep=False)
                 self._gen_btn.disabled = False
                 self._gen_btn.text = "Generate"
+                self._free_btn.disabled = False
                 self._progress.visible = False
                 self._set_status(f"Unexpected error: {exc}", error=True)
                 self._page.update()
 
         self._page.run_thread(_run)
+
+    def _on_free_chat(self, e) -> None:
+        """Start a chat-first session: no generation phases, describe the tone directly."""
+        provider = self._provider_dd.value or ""
+        model = self._model_dd.value or ""
+        if not provider or not model:
+            self._set_status("Pick an LLM provider and model.", error=True)
+            return
+
+        self._confidence.visible = False
+        self._set_status("")
+        # Like Generate, this is the point where any previous conversation is discarded.
+        self._chat_list.controls.clear()
+        self._pending_row = None
+        self._pending_spinner = None
+        self._session = ToneSession(
+            api_key=config.llm_api_key(provider),
+            model=model,
+            timeout=config.llm_timeout(),
+            on_entry=self._on_chat_entry,
+            on_request=self._on_chat_request,
+        )
+        config.set_default_llm(provider, model)
+        self._add_chat_note('Describe the tone you want — e.g. "warm blues lead, light reverb"')
+        self._show_chat()
 
     def _on_apply(self, e) -> None:
         artist = (self._artist.value or "").strip()
