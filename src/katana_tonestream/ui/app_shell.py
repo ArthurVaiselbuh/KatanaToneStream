@@ -80,6 +80,7 @@ class AppShell:
             self._status_text.value = "No amp connected"
         for card in self._cards.values():
             card.refresh_apply_state()
+        self.generate_dialog.refresh_apply_state()
         self.page.update()
 
     # ── Generate ────────────────────────────────────────────────────────────

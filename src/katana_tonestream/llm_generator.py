@@ -137,13 +137,11 @@ these fields:
   "delay_on": <bool>,
   "delay_level": <int 0-120>,
   "reverb_on": <bool>,
-  "reverb_level": <int 0-100>,
-  "confidence": <int 0-100>
+  "reverb_level": <int 0-100>
 }}
 
 od_drive is the booster/overdrive pedal's gain; od_level is its output level. delay_level and
-reverb_level are the effect mix levels. EQ at 50 = flat. confidence reflects how precisely this
-tone is documented.
+reverb_level are the effect mix levels. EQ at 50 = flat.
 """
 
 # Chat turns — refinements or free-mode tone requests — continue the same
@@ -248,7 +246,6 @@ _VALUES_SCHEMA = _schema(
         "od_level",
         "delay_level",
         "reverb_level",
-        "confidence",
     ),
     booleans=("od_on", "fx1_on", "fx2_on", "delay_on", "reverb_on"),
 )
@@ -314,7 +311,11 @@ def _friendly_llm_error(exc: Exception, model: str) -> str:
             f"{provider} timed out — a local model may still be loading, or the "
             "provider is slow. Give it a moment and try again."
         )
-    if isinstance(exc, (APIConnectionError, ServiceUnavailableError)):
+    if isinstance(exc, ServiceUnavailableError):
+        # 503 means the provider answered — overload/rate limiting, not a
+        # connection problem.
+        return f"{provider} is temporarily overloaded or rate limited. Wait a moment and try again."
+    if isinstance(exc, APIConnectionError):
         return f"Could not reach {provider}. Check your connection and try again."
     if isinstance(exc, BadRequestError):
         return f"{provider} rejected the request: {_short(getattr(exc, 'message', str(exc)))}"
@@ -450,8 +451,11 @@ class ToneSession:
     pasted back into later prompts as text. Providers are stateless, so the whole
     message list is re-sent on every call.
 
-    Model and API key are fixed at construction; the UI creates a fresh session per
-    Generate click. ``on_request`` (if given) fires with the user ``ChatEntry`` the
+    Model and API key are set at construction and can be switched later with
+    ``set_engine`` — the UI does so before every send, so the conversation always
+    follows the provider/model dropdowns.
+
+    ``on_request`` (if given) fires with the user ``ChatEntry`` the
     moment a turn is dispatched to the provider, and ``on_entry`` fires for every
     committed ``ChatEntry`` — the same user entry object again, then the assistant
     reply — so the UI can show a pending bubble immediately and settle it on
@@ -479,6 +483,16 @@ class ToneSession:
     def api_messages(self) -> list[dict]:
         """The provider-facing message list (system prompt included), as a copy."""
         return list(self._messages)
+
+    def set_engine(self, api_key: str, model: str) -> None:
+        """Point the conversation at a different provider/model.
+
+        The history is plain role/content messages and providers are stateless,
+        so a conversation can switch engines mid-flight — the next call simply
+        re-sends the whole thread to the new one.
+        """
+        self.model = (model or "").strip() or self.model
+        self._api_key = api_key
 
     # ── provider I/O ──────────────────────────────────────────────────────────
 
@@ -641,7 +655,6 @@ class ToneSession:
             "delay_level",
             "reverb_on",
             "reverb_level",
-            "confidence",
         )
         for key in required:
             if key not in data:
@@ -661,7 +674,6 @@ class ToneSession:
             "delay_level": _clamp(data["delay_level"], 0, 120, "delay_level"),
             "reverb_on": bool(data["reverb_on"]),
             "reverb_level": _clamp(data["reverb_level"], 0, 100, "reverb_level"),
-            "confidence": _clamp(data["confidence"], 0, 100, "confidence"),
         }
         log.debug("LLM phase 3/3 (values) resolved: %s", result)
         return result

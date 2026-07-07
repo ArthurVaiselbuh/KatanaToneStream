@@ -183,7 +183,6 @@ class GenerateDialog:
         )
 
         # ── Status / progress ─────────────────────────────────────────────────
-        self._confidence = ft.Container(visible=False)
         self._status = ft.Text("", size=12, color=theme.AMBER, expand=True, no_wrap=False)
         self._progress = ft.ProgressBar(
             visible=False,
@@ -284,7 +283,7 @@ class GenerateDialog:
                 self._chat_view,
                 self._progress,
                 ft.Row(
-                    [self._status, self._confidence],
+                    [self._status],
                     spacing=8,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
@@ -366,9 +365,17 @@ class GenerateDialog:
             shape=ft.RoundedRectangleBorder(radius=12),
         )
 
+    def refresh_apply_state(self) -> None:
+        """Dim/enable the apply button based on MIDI connection (same rule as cards)."""
+        connected = self._midi.is_connected()
+        self._apply_btn.disabled = not connected
+        self._apply_btn.opacity = 1.0 if connected else 0.4
+        self._apply_btn.tooltip = None if connected else "Connect the Katana to apply"
+
     def open(self) -> None:
         self._models_cache.clear()
         self._populate_providers()
+        self.refresh_apply_state()
         # An existing conversation survives closing the dialog; resume it.
         if self._session is not None:
             self._show_chat()
@@ -620,6 +627,14 @@ class GenerateDialog:
         text = (self._chat_input.value or "").strip()
         if not text or self._session is None:
             return
+        provider = self._provider_dd.value or ""
+        model = self._model_dd.value or ""
+        if not provider or not model:
+            self._set_status("Pick an LLM provider and model.", error=True)
+            return
+        # The conversation follows the dropdowns, so switching provider/model
+        # mid-chat (e.g. away from a rate-limited one) takes effect on this send.
+        self._session.set_engine(config.llm_api_key(provider), model)
         self._chat_input.value = ""
         self._chat_input.disabled = True
         self._send_btn.disabled = True
@@ -749,7 +764,6 @@ class GenerateDialog:
         self._gen_btn.disabled = True
         self._gen_btn.text = "Generating…"
         self._free_btn.disabled = True
-        self._confidence.visible = False
         self._progress.visible = True
         self._set_status("")
 
@@ -778,20 +792,6 @@ class GenerateDialog:
                 )
                 config.set_default_llm(provider, model)
                 self._apply_params(result)
-                conf = result.get("confidence", 0)
-                self._confidence.content = ft.Row(
-                    [
-                        ft.Icon(ft.Icons.INSIGHTS, size=14, color=theme.AMBER),
-                        ft.Text(
-                            f"Confidence: {conf} / 100",
-                            size=12,
-                            color=theme.AMBER,
-                            weight=ft.FontWeight.W_500,
-                        ),
-                    ],
-                    spacing=6,
-                )
-                self._confidence.visible = True
                 self._gen_btn.disabled = False
                 self._gen_btn.text = "Generate"
                 self._free_btn.disabled = False
@@ -827,7 +827,6 @@ class GenerateDialog:
             self._set_status("Pick an LLM provider and model.", error=True)
             return
 
-        self._confidence.visible = False
         self._set_status("")
         # Like Generate, this is the point where any previous conversation is discarded.
         self._chat_list.controls.clear()

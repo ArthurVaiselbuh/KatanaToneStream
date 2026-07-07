@@ -41,7 +41,6 @@ _VALUES = {
     "delay_level": 50,
     "reverb_on": True,
     "reverb_level": 40,
-    "confidence": 80,
 }
 
 
@@ -78,7 +77,6 @@ def test_happy_path(mock_completion):
     assert result["bass"] == 60
     assert result["od_on"] is True
     assert result["reverb_on"] is True
-    assert result["confidence"] == 80
     assert mock_completion.call_count == 3
 
 
@@ -236,7 +234,7 @@ def test_hidden_preamp_gap_snaps_to_nearest(mock_completion):
 
 @patch("litellm.completion")
 def test_continuous_values_clamped(mock_completion):
-    out_of_range_values = dict(_VALUES, preamp_gain=999, bass=-5, confidence=200)
+    out_of_range_values = dict(_VALUES, preamp_gain=999, bass=-5)
     mock_completion.side_effect = [
         _make_response(_CHARACTER),
         _make_response(json.dumps(_TYPES)),
@@ -245,7 +243,6 @@ def test_continuous_values_clamped(mock_completion):
     result = generate_patch("A", "B", "", "")
     assert result["preamp_gain"] == 120
     assert result["bass"] == 0
-    assert result["confidence"] == 100
 
 
 @patch("litellm.completion")
@@ -322,6 +319,25 @@ def test_refine_works_as_first_turn(mock_completion):
     msgs = mock_completion.call_args.kwargs["messages"]
     assert [m["role"] for m in msgs] == ["system", "user"]
     assert "warm jazz clean" in msgs[-1]["content"]
+
+
+@patch("litellm.completion")
+def test_set_engine_switches_provider_mid_conversation(mock_completion):
+    # A session that started (and failed or succeeded) on one provider must send
+    # subsequent turns to whatever engine was set last, with the new key.
+    session = _generated_session(
+        mock_completion, [_refine_response("Done", None), _refine_response("Again", None)]
+    )
+    session.refine("tweak one", {})
+    assert mock_completion.call_args.kwargs["model"] == "openai/gpt-4o"
+
+    session.set_engine("ollama-key", "ollama/llama3")
+    session.refine("tweak two", {})
+    assert mock_completion.call_args.kwargs["model"] == "ollama/llama3"
+    assert mock_completion.call_args.kwargs["api_key"] == "ollama-key"
+    # The full conversation history moved over with it.
+    roles = [m["role"] for m in mock_completion.call_args.kwargs["messages"]]
+    assert roles == ["system"] + ["user", "assistant"] * 4 + ["user"]
 
 
 @patch("litellm.completion")
