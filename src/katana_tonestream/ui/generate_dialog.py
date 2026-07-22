@@ -90,6 +90,7 @@ class GenerateDialog:
         self._on_save = on_save
         self._models_cache: dict[str, list[str]] = {}
         self._session: ToneSession | None = None
+        self._editing_meta: PatchMeta | None = None
         self._pending_row: ft.Row | None = None
         self._pending_spinner: ft.ProgressRing | None = None
 
@@ -229,6 +230,17 @@ class GenerateDialog:
                 padding=ft.Padding.symmetric(horizontal=20, vertical=14),
             ),
         )
+        self._save_new_btn = ft.OutlinedButton(
+            "Save as new",
+            icon=ft.Icons.BOOKMARK_ADD_OUTLINED,
+            visible=False,
+            on_click=self._on_save_as_new,
+            style=ft.ButtonStyle(
+                color={ft.ControlState.DEFAULT: theme.AMBER},
+                shape=ft.RoundedRectangleBorder(radius=20),
+                padding=ft.Padding.symmetric(horizontal=20, vertical=14),
+            ),
+        )
 
         self._form_view = ft.Column(
             [
@@ -354,6 +366,7 @@ class GenerateDialog:
             actions=[
                 self._apply_btn,
                 self._save_btn,
+                self._save_new_btn,
                 ft.TextButton(
                     "Close",
                     style=ft.ButtonStyle(color=theme.TEXT_DIM),
@@ -384,6 +397,54 @@ class GenerateDialog:
         self._page.show_dialog(self._dialog)
         if self._provider_dd.value:
             self._fetch_models_for(self._provider_dd.value)
+
+    def edit(self, meta: PatchMeta) -> None:
+        """Reopen a previously saved generated patch, resuming its full LLM conversation."""
+        data = cache.get_generation_session(meta.id)
+        if data is None:
+            log.warning("Edit requested for %s but no generation session was saved", meta.id)
+            return
+
+        self._editing_meta = meta
+        self._models_cache.clear()
+        self._populate_providers()
+
+        provider = data.get("provider") or ""
+        configured_keys = [o.key for o in self._provider_dd.options]
+        if provider in configured_keys:
+            self._provider_dd.value = provider
+        self.refresh_apply_state()
+
+        self._artist.value = data.get("artist", "")
+        self._song.value = data.get("song", "")
+        self._notes.value = data.get("notes", "")
+
+        session = ToneSession(
+            api_key=config.llm_api_key(self._provider_dd.value) if self._provider_dd.value else "",
+            model=data.get("model") or "openai/gpt-4o",
+            timeout=config.llm_timeout(),
+            on_entry=self._on_chat_entry,
+            on_request=self._on_chat_request,
+        )
+        session.load_history(data.get("history", []))
+        self._session = session
+
+        self._chat_list.controls.clear()
+        self._pending_row = None
+        self._pending_spinner = None
+        for entry in session.history:
+            self._add_bubble(entry)
+
+        params = data.get("params")
+        if params:
+            self._apply_params(params)
+
+        self._update_save_buttons()
+        self._set_status(f"Editing '{meta.name}'")
+        self._show_chat()
+        self._page.show_dialog(self._dialog)
+        if self._provider_dd.value:
+            self._fetch_models_for(self._provider_dd.value, preferred_model=data.get("model"))
 
     def _on_close(self, e=None) -> None:
         self._page.pop_dialog()
@@ -418,7 +479,7 @@ class GenerateDialog:
         if self._provider_dd.value:
             self._fetch_models_for(self._provider_dd.value)
 
-    def _fetch_models_for(self, provider: str) -> None:
+    def _fetch_models_for(self, provider: str, preferred_model: str | None = None) -> None:
         self._model_dd.options = []
         self._model_dd.value = None
         # Block Generate while the list loads (also covers switching provider).
@@ -436,7 +497,7 @@ class GenerateDialog:
                     models = []
                 self._models_cache[provider] = models
             self._model_dd.options = [ft.dropdown.Option(key=m, text=m) for m in models]
-            default_m = config.default_llm_model(provider)
+            default_m = preferred_model or config.default_llm_model(provider)
             selected = default_m if default_m in models else (models[0] if models else None)
             self._model_dd.value = selected
             # Editable dropdown shows .text in its field; keep it in sync with .value
@@ -466,6 +527,11 @@ class GenerateDialog:
         self._status.value = msg
         self._status.color = theme.AMBER
         self._page.update()
+
+    def _update_save_buttons(self) -> None:
+        editing = self._editing_meta is not None
+        self._save_btn.text = "Update patch" if editing else "Save to cache"
+        self._save_new_btn.visible = editing
 
     # ── Refinement chat ───────────────────────────────────────────────────────
 
@@ -719,7 +785,9 @@ class GenerateDialog:
         self._reverb_level_slider.value = params["reverb_level"]
         self._reverb_level_field.value = str(params["reverb_level"])
 
-    def _build_patch(self, name: str = "Generated") -> KatanaPatch | None:
+    def _build_patch(
+        self, name: str = "Generated", patch_id: str | None = None
+    ) -> KatanaPatch | None:
         template = get_template()
         if template is None:
             self._set_status(
@@ -729,7 +797,7 @@ class GenerateDialog:
         # _current_params() keys match KatanaPatch field names, so spread them directly.
         p = self._current_params()
         meta = PatchMeta(
-            id=f"gen_{int(datetime.now(UTC).timestamp())}",
+            id=patch_id or f"gen_{int(datetime.now(UTC).timestamp())}",
             name=name,
             author="LLM",
             source="generated",
@@ -745,6 +813,22 @@ class GenerateDialog:
         )
         patch.raw_bytes = build_raw_bytes(patch, template)
         return patch
+
+    def _save_generation_session(self, patch_id: str) -> None:
+        if self._session is None:
+            return
+        cache.save_generation_session(
+            patch_id,
+            {
+                "provider": self._provider_dd.value or "",
+                "model": self._session.model,
+                "artist": self._artist.value or "",
+                "song": self._song.value or "",
+                "notes": self._notes.value or "",
+                "params": self._current_params(),
+                "history": self._session.history_dicts(),
+            },
+        )
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
@@ -772,6 +856,8 @@ class GenerateDialog:
         self._chat_list.controls.clear()
         self._pending_row = None
         self._pending_spinner = None
+        self._editing_meta = None
+        self._update_save_buttons()
         session = ToneSession(
             api_key=config.llm_api_key(provider),
             model=model,
@@ -832,6 +918,8 @@ class GenerateDialog:
         self._chat_list.controls.clear()
         self._pending_row = None
         self._pending_spinner = None
+        self._editing_meta = None
+        self._update_save_buttons()
         self._session = ToneSession(
             api_key=config.llm_api_key(provider),
             model=model,
@@ -863,15 +951,25 @@ class GenerateDialog:
             self._set_status(f"Apply failed: {exc}", error=True)
 
     def _on_save_patch(self, e) -> None:
+        self._save_patch(overwrite=self._editing_meta is not None)
+
+    def _on_save_as_new(self, e) -> None:
+        self._save_patch(overwrite=False)
+
+    def _save_patch(self, overwrite: bool) -> None:
         artist = (self._artist.value or "").strip()
         song = (self._song.value or "").strip()
         name = f"{artist} - {song}" if artist and song else "Generated"
 
-        patch = self._build_patch(name)
+        existing_id = self._editing_meta.id if overwrite and self._editing_meta else None
+        patch = self._build_patch(name, patch_id=existing_id)
         if patch is None:
             return
 
         alb_bytes = to_alb_bytes(patch.raw_bytes)
         cache.save_patch(patch.meta, alb_bytes)
-        self._set_status(f"Saved '{name}' to cache.")
+        self._save_generation_session(patch.meta.id)
+        self._editing_meta = patch.meta
+        self._update_save_buttons()
+        self._set_status(f"{'Updated' if overwrite else 'Saved'} '{name}' in cache.")
         self._on_save()

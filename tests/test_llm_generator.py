@@ -525,3 +525,19 @@ def test_refine_display_fields(mock_completion):
     assert user_entry.content != "brighter please"
     assert not user_entry.auto
     assert assistant_entry.display == "Raised the treble."
+
+
+@patch("litellm.completion")
+def test_history_dicts_roundtrips_through_load_history(mock_completion):
+    session = _generated_session(
+        mock_completion, [_refine_response("Brighter now", {"treble": 80})]
+    )
+    session.refine("brighter please", {"treble": 50})
+
+    restored = ToneSession(api_key="", model="openai/gpt-4o")
+    restored.load_history(session.history_dicts())
+
+    assert [(e.role, e.content, e.label, e.auto, e.display) for e in restored.history] == [
+        (e.role, e.content, e.label, e.auto, e.display) for e in session.history
+    ]
+    assert restored.api_messages() == session.api_messages()

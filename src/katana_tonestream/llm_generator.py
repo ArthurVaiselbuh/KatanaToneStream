@@ -484,6 +484,37 @@ class ToneSession:
         """The provider-facing message list (system prompt included), as a copy."""
         return list(self._messages)
 
+    def history_dicts(self) -> list[dict]:
+        """The conversation history as plain dicts, for persisting to disk."""
+        return [
+            {
+                "role": e.role,
+                "content": e.content,
+                "label": e.label,
+                "auto": e.auto,
+                "display": e.display,
+            }
+            for e in self.history
+        ]
+
+    def load_history(self, entries: list[dict]) -> None:
+        """Replay a previously saved conversation into this session.
+
+        Restores both self.history and the provider-facing message list exactly as
+        _commit would have built them live, but silently — no callbacks fire, since
+        these turns already happened in a prior session.
+        """
+        for d in entries:
+            entry = ChatEntry(
+                role=d["role"],
+                content=d["content"],
+                label=d.get("label"),
+                auto=d.get("auto", False),
+                display=d.get("display"),
+            )
+            self.history.append(entry)
+            self._messages.append({"role": entry.role, "content": entry.content})
+
     def set_engine(self, api_key: str, model: str) -> None:
         """Point the conversation at a different provider/model.
 

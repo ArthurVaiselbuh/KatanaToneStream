@@ -48,3 +48,32 @@ def test_missing_patch_returns_none(app_home):
 
 def test_empty_index_when_nothing_saved(app_home):
     assert cache.load_index() == {}
+
+
+def test_generation_session_roundtrip(app_home):
+    data = {"provider": "openai", "model": "gpt-4o", "history": [{"role": "user", "content": "hi"}]}
+    cache.save_generation_session("gen_1", data)
+
+    assert cache.get_generation_session("gen_1") == data
+
+
+def test_has_generation_session_before_and_after_save(app_home):
+    assert cache.has_generation_session("gen_1") is False
+
+    cache.save_generation_session("gen_1", {"history": []})
+
+    assert cache.has_generation_session("gen_1") is True
+
+
+def test_delete_patch_removes_session_file(app_home):
+    meta = _meta("gen_1")
+    cache.save_patch(meta, b"raw-tsl-bytes")
+    cache.save_generation_session("gen_1", {"history": []})
+
+    assert cache.is_cached("gen_1")
+    assert cache.has_generation_session("gen_1")
+
+    cache.delete_patch("gen_1")
+
+    assert not cache.is_cached("gen_1")
+    assert not cache.has_generation_session("gen_1")

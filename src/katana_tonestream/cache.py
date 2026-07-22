@@ -80,6 +80,31 @@ def is_cached(patch_id: str) -> bool:
     return (paths.cache_dir() / f"{patch_id}.tsl").exists()
 
 
+def _session_path(patch_id: str) -> Path:
+    return paths.cache_dir() / f"{patch_id}.session.json"
+
+
+def save_generation_session(patch_id: str, data: dict) -> None:
+    paths.ensure_dirs()
+    with open(_session_path(patch_id), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def get_generation_session(patch_id: str) -> dict | None:
+    path = _session_path(patch_id)
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def has_generation_session(patch_id: str) -> bool:
+    return _session_path(patch_id).exists()
+
+
 def mark_used(patch_id: str) -> None:
     index = load_index()
     if patch_id in index:
@@ -128,6 +153,9 @@ def delete_patch(patch_id: str) -> None:
     art = _art_path(patch_id)
     if art.exists():
         art.unlink()
+    session = _session_path(patch_id)
+    if session.exists():
+        session.unlink()
     index = load_index()
     if patch_id in index:
         del index[patch_id]

@@ -87,6 +87,9 @@ class AppShell:
     def _on_generate_clicked(self) -> None:
         self.generate_dialog.open()
 
+    def _on_edit_patch(self, meta: PatchMeta) -> None:
+        self.generate_dialog.edit(meta)
+
     # ── Credentials changed ─────────────────────────────────────────────────
     def _on_credentials_changed(self) -> None:
         self.search_bar.refresh_chips()
@@ -97,7 +100,14 @@ class AppShell:
 
     # ── Cards ───────────────────────────────────────────────────────────────
     def _make_card(self, meta: PatchMeta) -> ft.Control:
-        card = PatchCard(meta, self._apply, self._remove, self.page, self.midi.is_connected)
+        card = PatchCard(
+            meta,
+            self._apply,
+            self._remove,
+            self.page,
+            self.midi.is_connected,
+            on_edit=self._on_edit_patch,
+        )
         self._cards[meta.id] = card
         card.refresh_apply_state()
         return card.control

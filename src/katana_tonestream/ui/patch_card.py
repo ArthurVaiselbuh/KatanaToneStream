@@ -5,7 +5,7 @@ from pathlib import Path
 
 import flet as ft
 
-from ..cache import get_art_path, is_cached
+from ..cache import get_art_path, has_generation_session, is_cached
 from ..models import PatchMeta
 from . import theme
 
@@ -28,6 +28,7 @@ class PatchCard:
         on_remove: Callable[[PatchMeta], None],
         page: ft.Page,
         midi_connected: Callable[[], bool],
+        on_edit: Callable[[PatchMeta], None] | None = None,
     ) -> None:
         self.meta = meta
         self._page = page
@@ -50,6 +51,21 @@ class PatchCard:
         )
 
         cached = is_cached(meta.id)
+        editable = (
+            on_edit is not None and meta.source == "generated" and has_generation_session(meta.id)
+        )
+        self._edit_btn = ft.IconButton(
+            ft.Icons.EDIT_OUTLINED,
+            icon_size=15,
+            icon_color=theme.TEXT_DIM,
+            tooltip="Edit generation",
+            visible=editable,
+            on_click=lambda e: on_edit(meta),
+            style=ft.ButtonStyle(
+                padding=ft.Padding.all(4),
+                overlay_color={ft.ControlState.HOVERED: "#2A2A3C"},
+            ),
+        )
         self._remove_btn = ft.IconButton(
             ft.Icons.DELETE_OUTLINE,
             icon_size=15,
@@ -99,6 +115,7 @@ class PatchCard:
                             expand=True,
                         ),
                         self._cached_pill,
+                        self._edit_btn,
                         self._remove_btn,
                     ],
                     spacing=4,
