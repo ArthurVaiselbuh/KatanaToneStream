@@ -87,6 +87,32 @@ def llm_timeout() -> float:
     return val if val > 0 else 120.0
 
 
+def dial_sidebar_width() -> int:
+    """Persisted width (px) of the Create tab's amp-dial sidebar; default 280."""
+    raw = get("ui", "dial_sidebar_width", fallback="280")
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 280
+
+
+def set_dial_sidebar_width(width: int) -> None:
+    _set_ini_value("ui", "dial_sidebar_width", str(int(width)))
+
+
+def log_panel_width() -> int:
+    """Persisted width (px) of the log panel; default 360."""
+    raw = get("ui", "log_panel_width", fallback="360")
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 360
+
+
+def set_log_panel_width(width: int) -> None:
+    _set_ini_value("ui", "log_panel_width", str(int(width)))
+
+
 def midi_target_patch() -> int:
     """Return the default target channel as a MIDI PC number, or -1 for TONE-only.
 

@@ -1,5 +1,7 @@
 """Palette constants and small styled-control factories shared by the UI."""
 
+from collections.abc import Callable
+
 import flet as ft
 
 # ── Palette ─────────────────────────────────────────────────────────────────
@@ -110,6 +112,51 @@ _SOURCE_LABEL = {
     "local": "Local",
     "generated": "Generated",
 }
+
+
+def resize_handle(
+    target: ft.Container,
+    *,
+    min_width: int,
+    on_change: Callable[[int], None] | None = None,
+) -> ft.GestureDetector:
+    """A thin draggable strip that resizes ``target``'s width via a horizontal drag.
+
+    Place immediately before ``target`` in a Row, on the side facing the content it
+    separates: dragging left widens ``target``, dragging right narrows it. Only a
+    floor is enforced — the pane can be dragged arbitrarily wide. Draws the panel's
+    separator line itself (brightening on hover), so ``target`` should not also
+    carry its own left border. ``on_change`` (if given) fires once per drag, on
+    release, with the final width — for persisting it.
+    """
+    line = ft.Container(width=2, bgcolor=BORDER_DIM)
+
+    def _enter(e: ft.HoverEvent) -> None:
+        line.bgcolor = AMBER
+        line.update()
+
+    def _exit(e: ft.HoverEvent) -> None:
+        line.bgcolor = BORDER_DIM
+        line.update()
+
+    def _drag(e: ft.DragUpdateEvent) -> None:
+        delta = e.primary_delta or 0
+        target.width = max(min_width, (target.width or min_width) - delta)
+        target.update()
+
+    def _end(e: ft.DragEndEvent) -> None:
+        if on_change:
+            on_change(int(target.width or min_width))
+
+    return ft.GestureDetector(
+        content=ft.Container(line, width=6, alignment=ft.Alignment.CENTER),
+        mouse_cursor=ft.MouseCursor.RESIZE_COLUMN,
+        drag_interval=16,
+        on_horizontal_drag_update=_drag,
+        on_horizontal_drag_end=_end,
+        on_enter=_enter,
+        on_exit=_exit,
+    )
 
 
 def source_badge(source: str) -> ft.Container:

@@ -5,6 +5,7 @@ from datetime import datetime
 
 import flet as ft
 
+from .. import config
 from ..logging_setup import FletLogHandler
 from . import theme
 
@@ -48,7 +49,7 @@ class LogPanel:
         self._level_row = ft.Row(spacing=4)
         self._rebuild_level_chips()
 
-        self.control = ft.Container(
+        self._panel = ft.Container(
             content=ft.Column(
                 [
                     ft.Row(
@@ -80,10 +81,19 @@ class LogPanel:
                 spacing=6,
                 expand=True,
             ),
-            width=360,
+            width=config.log_panel_width(),
             bgcolor=theme.SURFACE_VAR,
-            border=ft.Border(left=ft.BorderSide(1, theme.BORDER_DIM)),
             padding=ft.Padding.symmetric(horizontal=8, vertical=8),
+        )
+        self.control = ft.Row(
+            [
+                theme.resize_handle(
+                    self._panel, min_width=260, on_change=config.set_log_panel_width
+                ),
+                self._panel,
+            ],
+            spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
             visible=False,
         )
 

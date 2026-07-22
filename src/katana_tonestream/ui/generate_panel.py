@@ -1,4 +1,4 @@
-"""GenerateDialog — LLM-powered tone generator modal."""
+"""GeneratePanel — LLM-powered tone generator; the Create tab's content."""
 
 import json
 import logging
@@ -78,7 +78,7 @@ def _slider_row(label: str, lo: int, hi: int) -> tuple[ft.Slider, ft.TextField, 
     return slider, field, row
 
 
-class GenerateDialog:
+class GeneratePanel:
     def __init__(
         self,
         page: ft.Page,
@@ -255,7 +255,28 @@ class GenerateDialog:
             spacing=10,
             tight=True,
         )
-        self._chat_view = ft.Column(
+        # Centered, narrow — there's nothing to show a sidebar of dials for until a
+        # conversation has actually produced settings.
+        self._form_body = ft.Container(
+            ft.Column(
+                [
+                    ft.Text(
+                        "Describe the tone you want, or name an artist and song to recreate",
+                        size=13,
+                        color=theme.TEXT_DIM,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    self._form_view,
+                ],
+                spacing=16,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                width=520,
+            ),
+            alignment=ft.Alignment.CENTER,
+            expand=True,
+        )
+
+        self._chat_panel = ft.Column(
             [
                 ft.Row(
                     [
@@ -272,7 +293,7 @@ class GenerateDialog:
                 ),
                 ft.Container(
                     self._chat_list,
-                    height=280,
+                    expand=True,
                     padding=ft.Padding.all(8),
                     border=ft.Border.all(1, theme.BORDER_DIM),
                     border_radius=8,
@@ -285,97 +306,107 @@ class GenerateDialog:
             ],
             spacing=8,
             tight=True,
+            expand=True,
+        )
+        # The amp/EQ/FX dials only matter once a conversation has actually set them,
+        # so they live in a sidebar next to the chat rather than dominating the view.
+        self._dial_sidebar = ft.Container(
+            ft.Column(
+                [
+                    ft.Text("Amp", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
+                    self._preamp_type,
+                    gain_row,
+                    ft.Text("EQ", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
+                    bass_row,
+                    mid_row,
+                    treble_row,
+                    presence_row,
+                    ft.Divider(height=1, color=theme.BORDER_DIM),
+                    ft.Text("OD/DS", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
+                    ft.Row(
+                        [self._od_type, self._od_on],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
+                    od_drive_row,
+                    od_level_row,
+                    ft.Divider(height=1, color=theme.BORDER_DIM),
+                    ft.Text("FX", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
+                    ft.Row(
+                        [self._fx1_type, self._fx1_on],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
+                    ft.Row(
+                        [self._fx2_type, self._fx2_on],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
+                    ft.Divider(height=1, color=theme.BORDER_DIM),
+                    ft.Text(
+                        "Delay / Reverb", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM
+                    ),
+                    ft.Row(
+                        [self._delay_type, self._delay_on],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
+                    delay_level_row,
+                    ft.Row(
+                        [self._reverb_type, self._reverb_on],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
+                    reverb_level_row,
+                ],
+                spacing=10,
+                tight=True,
+                scroll=ft.ScrollMode.AUTO,
+                expand=True,
+            ),
+            width=config.dial_sidebar_width(),
+            padding=ft.Padding.only(left=10),
+        )
+        self._chat_body = ft.Row(
+            [
+                self._chat_panel,
+                theme.resize_handle(
+                    self._dial_sidebar,
+                    min_width=200,
+                    on_change=config.set_dial_sidebar_width,
+                ),
+                self._dial_sidebar,
+            ],
+            spacing=0,
+            expand=True,
+            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
             visible=False,
         )
 
-        content = ft.Column(
-            [
-                ft.Row([self._provider_dd, self._model_dd], spacing=10),
-                self._form_view,
-                self._chat_view,
-                self._progress,
-                ft.Row(
-                    [self._status],
-                    spacing=8,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Divider(height=1, color=theme.BORDER_DIM),
-                ft.Text("Amp", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
-                self._preamp_type,
-                gain_row,
-                ft.Text("EQ", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
-                bass_row,
-                mid_row,
-                treble_row,
-                presence_row,
-                ft.Divider(height=1, color=theme.BORDER_DIM),
-                ft.Text("OD/DS", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
-                ft.Row(
-                    [self._od_type, self._od_on],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-                od_drive_row,
-                od_level_row,
-                ft.Divider(height=1, color=theme.BORDER_DIM),
-                ft.Text("FX", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM),
-                ft.Row(
-                    [self._fx1_type, self._fx1_on],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-                ft.Row(
-                    [self._fx2_type, self._fx2_on],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-                ft.Divider(height=1, color=theme.BORDER_DIM),
-                ft.Text(
-                    "Delay / Reverb", size=11, weight=ft.FontWeight.W_600, color=theme.TEXT_DIM
-                ),
-                ft.Row(
-                    [self._delay_type, self._delay_on],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-                delay_level_row,
-                ft.Row(
-                    [self._reverb_type, self._reverb_on],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-                reverb_level_row,
-            ],
-            spacing=10,
-            tight=True,
-            scroll=ft.ScrollMode.AUTO,
-            width=520,
-            height=560,
-        )
-
-        self._dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Row(
+        self.control = ft.Container(
+            ft.Column(
                 [
-                    ft.Icon(ft.Icons.AUTO_AWESOME, color=theme.AMBER, size=18),
-                    ft.Text("Generate Tone", size=15, weight=ft.FontWeight.BOLD, color="#FFFFFF"),
+                    ft.Row([self._provider_dd, self._model_dd], spacing=10),
+                    self._form_body,
+                    self._chat_body,
+                    self._progress,
+                    ft.Row(
+                        [self._status],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Divider(height=1, color=theme.BORDER_DIM),
+                    ft.Row(
+                        [self._apply_btn, self._save_btn, self._save_new_btn],
+                        alignment=ft.MainAxisAlignment.END,
+                        spacing=8,
+                    ),
                 ],
-                spacing=8,
+                spacing=10,
+                expand=True,
             ),
-            content=content,
-            actions=[
-                self._apply_btn,
-                self._save_btn,
-                self._save_new_btn,
-                ft.TextButton(
-                    "Close",
-                    style=ft.ButtonStyle(color=theme.TEXT_DIM),
-                    on_click=self._on_close,
-                ),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-            bgcolor=theme.SURFACE_VAR,
-            shape=ft.RoundedRectangleBorder(radius=12),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=14),
+            expand=True,
         )
 
     def refresh_apply_state(self) -> None:
@@ -385,21 +416,16 @@ class GenerateDialog:
         self._apply_btn.opacity = 1.0 if connected else 0.4
         self._apply_btn.tooltip = None if connected else "Connect the Katana to apply"
 
-    def open(self) -> None:
-        self._models_cache.clear()
+    def activate(self) -> None:
+        """One-time setup once the panel is mounted at app startup."""
         self._populate_providers()
         self.refresh_apply_state()
-        # An existing conversation survives closing the dialog; resume it.
-        if self._session is not None:
-            self._show_chat()
-        else:
-            self._show_form()
-        self._page.show_dialog(self._dialog)
+        self._show_form()
         if self._provider_dd.value:
             self._fetch_models_for(self._provider_dd.value)
 
     def edit(self, meta: PatchMeta) -> None:
-        """Reopen a previously saved generated patch, resuming its full LLM conversation."""
+        """Load a previously saved generated patch, resuming its full LLM conversation."""
         data = cache.get_generation_session(meta.id)
         if data is None:
             log.warning("Edit requested for %s but no generation session was saved", meta.id)
@@ -442,12 +468,8 @@ class GenerateDialog:
         self._update_save_buttons()
         self._set_status(f"Editing '{meta.name}'")
         self._show_chat()
-        self._page.show_dialog(self._dialog)
         if self._provider_dd.value:
             self._fetch_models_for(self._provider_dd.value, preferred_model=data.get("model"))
-
-    def _on_close(self, e=None) -> None:
-        self._page.pop_dialog()
 
     # ── LLM engine selection ────────────────────────────────────────────────
 
@@ -496,6 +518,12 @@ class GenerateDialog:
                     log.warning("Model fetch failed for %s: %s", provider, exc)
                     models = []
                 self._models_cache[provider] = models
+            if self._provider_dd.value != provider:
+                # The user switched providers again while this fetch was in flight
+                # (e.g. Ollama's discovery call is slow) — a later fetch for the
+                # now-current provider owns the dropdown; applying this one would
+                # clobber it with stale data for a provider that's no longer selected.
+                return
             self._model_dd.options = [ft.dropdown.Option(key=m, text=m) for m in models]
             default_m = preferred_model or config.default_llm_model(provider)
             selected = default_m if default_m in models else (models[0] if models else None)
@@ -536,14 +564,14 @@ class GenerateDialog:
     # ── Refinement chat ───────────────────────────────────────────────────────
 
     def _show_form(self) -> None:
-        self._form_view.visible = True
-        self._chat_view.visible = False
+        self._form_body.visible = True
+        self._chat_body.visible = False
         self._back_to_chat_btn.visible = self._session is not None
         self._page.update()
 
     def _show_chat(self) -> None:
-        self._form_view.visible = False
-        self._chat_view.visible = True
+        self._form_body.visible = False
+        self._chat_body.visible = True
         self._page.update()
 
     def _on_chat_request(self, entry: ChatEntry) -> None:

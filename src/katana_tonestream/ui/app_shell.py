@@ -21,7 +21,7 @@ from ..logging_setup import FletLogHandler
 from ..models import PatchMeta
 from ..service import PatchService
 from . import theme
-from .generate_dialog import GenerateDialog
+from .generate_panel import GeneratePanel
 from .log_panel import LogPanel
 from .patch_card import PatchCard
 from .search_bar import SearchBar
@@ -34,6 +34,8 @@ _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _ICON = _ASSETS / "logo.ico"
 _MIDI_OK = "#22C55E"
 _MIDI_BAD = "#EF4444"
+_CREATE_TAB = 0
+_LIBRARY_TAB = 1
 
 
 class AppShell:
@@ -54,8 +56,8 @@ class AppShell:
             on_credentials_changed=self._on_credentials_changed,
             on_amp_model_changed=self.slot_picker.set_model,
         )
-        self.generate_dialog = GenerateDialog(page, self.midi, on_save=self._on_generate_saved)
-        self.search_bar = SearchBar(page, self._on_search, on_generate=self._on_generate_clicked)
+        self.generate_panel = GeneratePanel(page, self.midi, on_save=self._on_generate_saved)
+        self.search_bar = SearchBar(page, self._on_search)
 
         self._build_page()
         self._start_threads()
@@ -78,17 +80,18 @@ class AppShell:
         self._status_text.color = theme.TEXT_DIM if ok else _MIDI_BAD
         if not ok:
             self._status_text.value = "No amp connected"
-        for card in self._cards.values():
+        # Snapshot before iterating — _render_results() can clear/rebuild self._cards
+        # from a search thread while this (the MIDI monitor thread) is mid-loop.
+        for card in list(self._cards.values()):
             card.refresh_apply_state()
-        self.generate_dialog.refresh_apply_state()
+        self.generate_panel.refresh_apply_state()
         self.page.update()
 
     # ── Generate ────────────────────────────────────────────────────────────
-    def _on_generate_clicked(self) -> None:
-        self.generate_dialog.open()
-
     def _on_edit_patch(self, meta: PatchMeta) -> None:
-        self.generate_dialog.edit(meta)
+        self.generate_panel.edit(meta)
+        self._tabs.selected_index = _CREATE_TAB
+        self.page.update()
 
     # ── Credentials changed ─────────────────────────────────────────────────
     def _on_credentials_changed(self) -> None:
@@ -203,7 +206,16 @@ class AppShell:
     # ── Background threads ──────────────────────────────────────────────────
     def _start_threads(self) -> None:
         threading.Thread(target=self._midi_monitor, daemon=True).start()
-        self.page.run_thread(self._initial_load)
+        # Sequential on one thread, not two concurrent run_thread calls: both do
+        # several page.update()s in a row during the same startup window, and two
+        # threads racing to mutate/serialize the control tree at once is exactly
+        # what corrupted the library render before this was serialized — confirmed
+        # by reverting it and reproducing the empty-library bug again.
+        self.page.run_thread(self._startup_load)
+
+    def _startup_load(self) -> None:
+        self._initial_load()
+        self.generate_panel.activate()
 
     def _midi_monitor(self) -> None:
         while True:
@@ -311,8 +323,41 @@ class AppShell:
         self._results_wrapper = ft.Container(content=self._results_list, expand=True, visible=False)
         results_area = ft.Stack([self._empty_state, self._results_wrapper], expand=True)
 
+        library_tab = ft.Column(
+            [self.search_bar.control, ft.Divider(height=1, color=theme.BORDER_DIM), results_area],
+            spacing=0,
+            expand=True,
+        )
+
+        # Create lands first/selected — generation is the app's primary flow, browsing
+        # existing patches is the secondary one.
+        self._tabs = ft.Tabs(
+            length=2,
+            selected_index=_CREATE_TAB,
+            expand=True,
+            content=ft.Column(
+                [
+                    ft.TabBar(
+                        tabs=[
+                            ft.Tab(label="Create", icon=ft.Icons.AUTO_AWESOME),
+                            ft.Tab(label="Library", icon=ft.Icons.LIBRARY_MUSIC_OUTLINED),
+                        ],
+                        indicator_color=theme.AMBER,
+                        label_color="#FFFFFF",
+                        unselected_label_color=theme.TEXT_DIM,
+                    ),
+                    ft.TabBarView(
+                        controls=[self.generate_panel.control, library_tab],
+                        expand=True,
+                    ),
+                ],
+                spacing=0,
+                expand=True,
+            ),
+        )
+
         content_row = ft.Row(
-            [results_area, self.settings_pane.control, self.log_panel.control],
+            [self._tabs, self.settings_pane.control, self.log_panel.control],
             spacing=0,
             expand=True,
             vertical_alignment=ft.CrossAxisAlignment.STRETCH,
@@ -321,8 +366,6 @@ class AppShell:
         page.add(
             ft.Column(
                 [
-                    self.search_bar.control,
-                    ft.Divider(height=1, color=theme.BORDER_DIM),
                     content_row,
                     ft.Divider(height=1, color=theme.BORDER_DIM),
                     self._status_bar,
