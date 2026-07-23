@@ -116,6 +116,13 @@ class GeneratePanel:
             max_lines=3,
         )
 
+        # Patch name shown to Apply/Save; defaults to "Artist - Song" but is always
+        # user-editable, so a generated or edited patch can be renamed before saving.
+        self._patch_name = theme.text_field(
+            "Patch name",
+            expand=True,
+        )
+
         # ── Refinement chat ───────────────────────────────────────────────────
         self._chat_list = ft.Column(
             [], spacing=8, tight=True, scroll=ft.ScrollMode.AUTO, auto_scroll=True
@@ -397,9 +404,10 @@ class GeneratePanel:
                     ),
                     ft.Divider(height=1, color=theme.BORDER_DIM),
                     ft.Row(
-                        [self._apply_btn, self._save_btn, self._save_new_btn],
+                        [self._patch_name, self._apply_btn, self._save_btn, self._save_new_btn],
                         alignment=ft.MainAxisAlignment.END,
                         spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=10,
@@ -444,6 +452,7 @@ class GeneratePanel:
         self._artist.value = data.get("artist", "")
         self._song.value = data.get("song", "")
         self._notes.value = data.get("notes", "")
+        self._patch_name.value = meta.name
 
         session = ToneSession(
             api_key=config.llm_api_key(self._provider_dd.value) if self._provider_dd.value else "",
@@ -478,7 +487,7 @@ class GeneratePanel:
         # _fetch_models_for) so it can't be fired before the model list loads.
         # Also reset a stale "Generating…" label left by a prior hung run.
         self._gen_btn.disabled = True
-        self._gen_btn.text = "Generate"
+        self._gen_btn.content = "Generate"
         self._free_btn.disabled = True
         configured = configured_providers()
         self._provider_dd.options = [
@@ -558,7 +567,7 @@ class GeneratePanel:
 
     def _update_save_buttons(self) -> None:
         editing = self._editing_meta is not None
-        self._save_btn.text = "Update patch" if editing else "Save to cache"
+        self._save_btn.content = "Update patch" if editing else "Save to cache"
         self._save_new_btn.visible = editing
 
     # ── Refinement chat ───────────────────────────────────────────────────────
@@ -874,7 +883,7 @@ class GeneratePanel:
             return
 
         self._gen_btn.disabled = True
-        self._gen_btn.text = "Generating…"
+        self._gen_btn.content = "Generating…"
         self._free_btn.disabled = True
         self._progress.visible = True
         self._set_status("")
@@ -886,6 +895,7 @@ class GeneratePanel:
         self._pending_spinner = None
         self._editing_meta = None
         self._update_save_buttons()
+        self._patch_name.value = f"{artist} - {song}"
         session = ToneSession(
             api_key=config.llm_api_key(provider),
             model=model,
@@ -907,7 +917,7 @@ class GeneratePanel:
                 config.set_default_llm(provider, model)
                 self._apply_params(result)
                 self._gen_btn.disabled = False
-                self._gen_btn.text = "Generate"
+                self._gen_btn.content = "Generate"
                 self._free_btn.disabled = False
                 self._progress.visible = False
                 self._set_status("")
@@ -916,7 +926,7 @@ class GeneratePanel:
                 # Already a clear, user-facing message.
                 self._resolve_pending_bubble(keep=False)
                 self._gen_btn.disabled = False
-                self._gen_btn.text = "Generate"
+                self._gen_btn.content = "Generate"
                 self._free_btn.disabled = False
                 self._progress.visible = False
                 self._set_status(str(exc), error=True)
@@ -925,7 +935,7 @@ class GeneratePanel:
                 log.exception("Unexpected error during patch generation")
                 self._resolve_pending_bubble(keep=False)
                 self._gen_btn.disabled = False
-                self._gen_btn.text = "Generate"
+                self._gen_btn.content = "Generate"
                 self._free_btn.disabled = False
                 self._progress.visible = False
                 self._set_status(f"Unexpected error: {exc}", error=True)
@@ -948,6 +958,7 @@ class GeneratePanel:
         self._pending_spinner = None
         self._editing_meta = None
         self._update_save_buttons()
+        self._patch_name.value = ""
         self._session = ToneSession(
             api_key=config.llm_api_key(provider),
             model=model,
@@ -959,12 +970,18 @@ class GeneratePanel:
         self._add_chat_note('Describe the tone you want — e.g. "warm blues lead, light reverb"')
         self._show_chat()
 
-    def _on_apply(self, e) -> None:
+    def _current_patch_name(self) -> str:
+        """The name to save/apply under — the editable field, falling back to
+        "Artist - Song" (or "Generated") only while it's still untouched."""
+        typed = (self._patch_name.value or "").strip()
+        if typed:
+            return typed
         artist = (self._artist.value or "").strip()
         song = (self._song.value or "").strip()
-        name = f"{artist} - {song}" if artist and song else "Generated"
+        return f"{artist} - {song}" if artist and song else "Generated"
 
-        patch = self._build_patch(name)
+    def _on_apply(self, e) -> None:
+        patch = self._build_patch(self._current_patch_name())
         if patch is None:
             return
 
@@ -985,9 +1002,7 @@ class GeneratePanel:
         self._save_patch(overwrite=False)
 
     def _save_patch(self, overwrite: bool) -> None:
-        artist = (self._artist.value or "").strip()
-        song = (self._song.value or "").strip()
-        name = f"{artist} - {song}" if artist and song else "Generated"
+        name = self._current_patch_name()
 
         existing_id = self._editing_meta.id if overwrite and self._editing_meta else None
         patch = self._build_patch(name, patch_id=existing_id)
