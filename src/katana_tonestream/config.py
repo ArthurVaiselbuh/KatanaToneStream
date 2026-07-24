@@ -113,6 +113,16 @@ def set_log_panel_width(width: int) -> None:
     _set_ini_value("ui", "log_panel_width", str(int(width)))
 
 
+def library_view_mode() -> str:
+    """Persisted Library tab view style ('list' or 'grid'); default 'list'."""
+    raw = get("ui", "library_view_mode", fallback="list").strip().lower()
+    return raw if raw in ("list", "grid") else "list"
+
+
+def set_library_view_mode(mode: str) -> None:
+    _set_ini_value("ui", "library_view_mode", "grid" if mode == "grid" else "list")
+
+
 def midi_target_patch() -> int:
     """Return the default target channel as a MIDI PC number, or -1 for TONE-only.
 

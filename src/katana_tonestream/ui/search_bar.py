@@ -20,6 +20,7 @@ class SearchBar:
         self,
         page: ft.Page,
         on_search: Callable[[str, str], None],
+        trailing: ft.Control | None = None,
     ) -> None:
         self._page = page
         self._on_search = on_search
@@ -41,9 +42,14 @@ class SearchBar:
         self._filter_row = ft.Row(spacing=6, wrap=False)
         self._rebuild_chips()
 
+        filters_row_controls: list[ft.Control] = [self._filter_row]
+        if trailing:
+            filters_row_controls += [ft.Container(expand=True), trailing]
+        filters_row = ft.Row(filters_row_controls, alignment=ft.MainAxisAlignment.START)
+
         self.control = ft.Container(
             ft.Column(
-                [ft.Row([self._field, search_btn], spacing=10), self._filter_row],
+                [ft.Row([self._field, search_btn], spacing=10), filters_row],
                 spacing=10,
             ),
             padding=ft.Padding.symmetric(horizontal=16, vertical=14),

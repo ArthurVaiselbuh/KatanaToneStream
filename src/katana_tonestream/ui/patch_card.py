@@ -9,13 +9,17 @@ from ..cache import get_art_path, has_generation_session, is_cached
 from ..models import PatchMeta
 from . import theme
 
-
-def _art_image(path: Path) -> ft.Image:
-    return ft.Image(src=str(path), width=theme.ART_SIZE, height=theme.ART_SIZE, fit="cover")
+_GRID_ART_HEIGHT = 110
 
 
-def _art_placeholder() -> ft.Control:
-    return ft.Icon(ft.Icons.MUSIC_NOTE_OUTLINED, size=28, color=theme.TEXT_DIM)
+def _art_image(path: Path, *, fixed_size: int | None) -> ft.Image:
+    if fixed_size is not None:
+        return ft.Image(src=str(path), width=fixed_size, height=fixed_size, fit="cover")
+    return ft.Image(src=str(path), expand=True, fit="cover")
+
+
+def _art_placeholder(*, icon_size: int = 28) -> ft.Control:
+    return ft.Icon(ft.Icons.MUSIC_NOTE_OUTLINED, size=icon_size, color=theme.TEXT_DIM)
 
 
 class PatchCard:
@@ -29,11 +33,18 @@ class PatchCard:
         page: ft.Page,
         midi_connected: Callable[[], bool],
         on_edit: Callable[[PatchMeta], None] | None = None,
+        layout: str = "list",
+        on_select: Callable[["PatchCard"], None] | None = None,
     ) -> None:
         self.meta = meta
+        self._on_select = on_select
         self._page = page
         self._midi_connected = midi_connected
         self._busy = False
+        self._layout = layout
+        self._hovering = False
+        self._selected = False
+        self._hover_targets: list[ft.Control] = []
 
         self._apply_btn = theme.amber_button(
             "Apply",
@@ -94,51 +105,134 @@ class PatchCard:
         )
 
         art_path = get_art_path(meta.id)
+        grid = layout == "grid"
         self._art_slot = ft.Container(
-            content=_art_image(art_path) if art_path else _art_placeholder(),
-            width=theme.ART_SIZE,
-            height=theme.ART_SIZE,
+            content=(
+                _art_image(art_path, fixed_size=None if grid else theme.ART_SIZE)
+                if art_path
+                else _art_placeholder(icon_size=36 if grid else 28)
+            ),
+            width=None if grid else theme.ART_SIZE,
+            height=_GRID_ART_HEIGHT if grid else theme.ART_SIZE,
             border_radius=8,
             bgcolor="#2A2A3C",
             alignment=ft.Alignment.CENTER,
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
+        action_box = ft.Stack([self._apply_btn, self._spinner_wrap])
 
-        info_col = ft.Column(
-            [
-                ft.Row(
+        if grid:
+            action_overlay = ft.Container(
+                ft.Row([self._edit_btn, self._remove_btn], spacing=0, tight=True),
+                bgcolor=theme.SURFACE_VAR,
+                border_radius=8,
+                padding=1,
+                top=3,
+                right=3,
+                opacity=0,
+                animate_opacity=150,
+            )
+            self._hover_targets = [action_overlay]
+            art_stack = ft.Stack([self._art_slot, action_overlay])
+            self.control = ft.Container(
+                ft.Column(
                     [
+                        art_stack,
                         ft.Text(
                             meta.name or "Unnamed Patch",
                             weight=ft.FontWeight.W_600,
-                            size=14,
-                            expand=True,
+                            size=13,
+                            max_lines=2,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            tooltip=meta.name or None,
                         ),
-                        self._cached_pill,
-                        self._edit_btn,
-                        self._remove_btn,
+                        ft.Text(
+                            meta.author or "Unknown author",
+                            size=10,
+                            color=theme.TEXT_DIM,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            tooltip=meta.author or None,
+                        ),
+                        ft.Row([theme.source_badge(meta.source)], spacing=6),
+                        ft.Container(expand=True),
+                        action_box,
                     ],
                     spacing=4,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    expand=True,
                 ),
-                ft.Text(meta.author or "Unknown author", size=11, color=theme.TEXT_DIM),
-                ft.Row([theme.source_badge(meta.source)], spacing=8),
-            ],
-            expand=True,
-            spacing=4,
-        )
-        action_box = ft.Stack([self._apply_btn, self._spinner_wrap])
+                padding=10,
+                border_radius=10,
+                bgcolor=theme.CARD_BG,
+                border=ft.Border.all(1, theme.BORDER_DIM),
+            )
+        else:
+            self._hover_targets = [self._edit_btn, self._remove_btn]
+            for control in self._hover_targets:
+                control.opacity = 0
+                control.animate_opacity = 150
+            info_col = ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(
+                                meta.name or "Unnamed Patch",
+                                weight=ft.FontWeight.W_600,
+                                size=14,
+                                expand=True,
+                                tooltip=meta.name or None,
+                            ),
+                            self._cached_pill,
+                            self._edit_btn,
+                            self._remove_btn,
+                        ],
+                        spacing=4,
+                    ),
+                    ft.Text(meta.author or "Unknown author", size=11, color=theme.TEXT_DIM),
+                    ft.Row([theme.source_badge(meta.source)], spacing=8),
+                ],
+                expand=True,
+                spacing=4,
+            )
+            self.control = ft.Container(
+                ft.Row(
+                    [self._art_slot, info_col, action_box],
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=12,
+                border_radius=10,
+                bgcolor=theme.CARD_BG,
+                border=ft.Border.all(1, theme.BORDER_DIM),
+            )
 
-        self.control = ft.Container(
-            ft.Row(
-                [self._art_slot, info_col, action_box],
-                spacing=12,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=12,
-            border_radius=10,
-            bgcolor=theme.CARD_BG,
-            border=ft.Border.all(1, theme.BORDER_DIM),
-        )
+        self.control.on_hover = self._on_hover
+        self.control.on_click = self._on_click_card
+
+    # ── Hover / select reveal for edit & remove ─────────────────────────────
+    def _on_hover(self, e: ft.Event) -> None:
+        self._hovering = bool(e.data)
+        self._refresh_hover_state()
+
+    def _on_click_card(self, e: ft.Event) -> None:
+        self._selected = not self._selected
+        if self._selected and self._on_select:
+            self._on_select(self)
+        self._refresh_hover_state()
+
+    def deselect(self) -> None:
+        """Clear selection from outside — called when another card is selected."""
+        if self._selected:
+            self._selected = False
+            self._refresh_hover_state()
+
+    def _refresh_hover_state(self) -> None:
+        show = self._hovering or self._selected
+        for control in self._hover_targets:
+            control.opacity = 1.0 if show else 0.0
+        self.control.border = ft.Border.all(1, theme.AMBER if self._selected else theme.BORDER_DIM)
+        self._page.update()
 
     # ── Live updates (call from the UI thread) ──────────────────────────────
     def set_busy(self, busy: bool) -> None:
@@ -154,7 +248,8 @@ class PatchCard:
         self._page.update()
 
     def set_art(self, path: Path) -> None:
-        self._art_slot.content = _art_image(path)
+        fixed_size = None if self._layout == "grid" else theme.ART_SIZE
+        self._art_slot.content = _art_image(path, fixed_size=fixed_size)
         self._page.update()
 
     def refresh_apply_state(self) -> None:

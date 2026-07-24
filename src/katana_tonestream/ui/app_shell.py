@@ -15,7 +15,7 @@ import flet as ft
 
 from ..art_resolver import resolve_art
 from ..cache import delete_patch, get_art_path, get_cached_patches, save_art
-from ..config import amp_model, midi_target_patch
+from ..config import amp_model, library_view_mode, midi_target_patch, set_library_view_mode
 from ..fetcher import fetch_art
 from ..logging_setup import FletLogHandler
 from ..models import PatchMeta
@@ -45,6 +45,8 @@ class AppShell:
         self.midi = service.midi
         self._applying: set[str] = set()
         self._cards: dict[str, PatchCard] = {}
+        self._last_results: list[PatchMeta] = []
+        self._view_mode = library_view_mode()
 
         cfg_patch = midi_target_patch()
         self.slot_picker = SlotPicker(
@@ -57,10 +59,77 @@ class AppShell:
             on_amp_model_changed=self.slot_picker.set_model,
         )
         self.generate_panel = GeneratePanel(page, self.midi, on_save=self._on_generate_saved)
-        self.search_bar = SearchBar(page, self._on_search)
+        self.search_bar = SearchBar(page, self._on_search, trailing=self._build_view_toggle())
 
         self._build_page()
         self._start_threads()
+
+    # ── View mode toggle ────────────────────────────────────────────────────
+    def _build_view_toggle(self) -> ft.Control:
+        self._view_list_btn = ft.IconButton(
+            ft.Icons.VIEW_LIST_ROUNDED,
+            icon_size=18,
+            tooltip="List view",
+            icon_color=theme.AMBER if self._view_mode == "list" else theme.TEXT_DIM,
+            on_click=lambda e: self._set_view_mode("list"),
+        )
+        self._view_grid_btn = ft.IconButton(
+            ft.Icons.GRID_VIEW_ROUNDED,
+            icon_size=18,
+            tooltip="Grid view",
+            icon_color=theme.AMBER if self._view_mode == "grid" else theme.TEXT_DIM,
+            on_click=lambda e: self._set_view_mode("grid"),
+        )
+        return ft.Row([self._view_list_btn, self._view_grid_btn], spacing=2, tight=True)
+
+    # ── Create/Library tab switcher (lives in the AppBar title row) ────────
+    def _build_tab_switcher(self) -> ft.Control:
+        # Create lands first/selected — generation is the app's primary flow,
+        # browsing existing patches is the secondary one.
+        self._active_tab = _CREATE_TAB
+        self._tab_switcher_row = ft.Row(spacing=6, tight=True)
+        self._rebuild_tab_switcher()
+        return self._tab_switcher_row
+
+    def _rebuild_tab_switcher(self) -> None:
+        self._tab_switcher_row.controls = [
+            self._tab_button("Create", ft.Icons.AUTO_AWESOME, _CREATE_TAB),
+            self._tab_button("Library", ft.Icons.LIBRARY_MUSIC_OUTLINED, _LIBRARY_TAB),
+        ]
+
+    def _tab_button(self, label: str, icon: str, index: int) -> ft.Container:
+        """A bigger, TabBar-style button — bold label, amber icon + underline when active."""
+        active = self._active_tab == index
+        return ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(icon, size=20, color=theme.AMBER if active else theme.TEXT_DIM),
+                    ft.Text(
+                        label,
+                        size=15,
+                        weight=ft.FontWeight.BOLD,
+                        color="#FFFFFF" if active else theme.TEXT_DIM,
+                    ),
+                ],
+                spacing=8,
+                tight=True,
+            ),
+            padding=ft.Padding.only(left=4, right=4, top=10, bottom=7),
+            border=ft.Border.only(
+                bottom=ft.BorderSide(3, theme.AMBER if active else "transparent")
+            ),
+            on_click=lambda e: self._select_tab(index),
+            animate=ft.Animation(150, ft.AnimationCurve.EASE_IN_OUT),
+        )
+
+    def _select_tab(self, index: int) -> None:
+        if index == self._active_tab:
+            return
+        self._active_tab = index
+        self._rebuild_tab_switcher()
+        self._create_view.visible = index == _CREATE_TAB
+        self._library_view.visible = index == _LIBRARY_TAB
+        self.page.update()
 
     # ── Status + MIDI indicator ─────────────────────────────────────────────
     def _set_status(self, msg: str) -> None:
@@ -90,8 +159,7 @@ class AppShell:
     # ── Generate ────────────────────────────────────────────────────────────
     def _on_edit_patch(self, meta: PatchMeta) -> None:
         self.generate_panel.edit(meta)
-        self._tabs.selected_index = _CREATE_TAB
-        self.page.update()
+        self._select_tab(_CREATE_TAB)
 
     # ── Credentials changed ─────────────────────────────────────────────────
     def _on_credentials_changed(self) -> None:
@@ -110,19 +178,45 @@ class AppShell:
             self.page,
             self.midi.is_connected,
             on_edit=self._on_edit_patch,
+            layout=self._view_mode,
+            on_select=self._on_card_selected,
         )
         self._cards[meta.id] = card
         card.refresh_apply_state()
         return card.control
 
+    def _on_card_selected(self, selected: PatchCard) -> None:
+        """Enforce single selection — deselect every other card in the results."""
+        for card in self._cards.values():
+            if card is not selected:
+                card.deselect()
+
+    def _active_results_container(self) -> ft.ListView | ft.GridView:
+        return self._results_grid if self._view_mode == "grid" else self._results_list
+
     def _render_results(self, results: list[PatchMeta]) -> None:
+        self._last_results = results
         self._cards.clear()
         self._results_list.controls.clear()
+        self._results_grid.controls.clear()
+        container = self._active_results_container()
         for meta in results:
-            self._results_list.controls.append(self._make_card(meta))
+            container.controls.append(self._make_card(meta))
         has = len(results) > 0
         self._empty_state.visible = not has
-        self._results_wrapper.visible = has
+        self._results_wrapper.visible = has and self._view_mode == "list"
+        self._results_grid_wrapper.visible = has and self._view_mode == "grid"
+
+    # ── View mode ───────────────────────────────────────────────────────────
+    def _set_view_mode(self, mode: str) -> None:
+        if mode == self._view_mode:
+            return
+        self._view_mode = mode
+        self._view_list_btn.icon_color = theme.AMBER if mode == "list" else theme.TEXT_DIM
+        self._view_grid_btn.icon_color = theme.AMBER if mode == "grid" else theme.TEXT_DIM
+        self._render_results(self._last_results)
+        self.page.update()
+        set_library_view_mode(mode)
 
     # ── Search ──────────────────────────────────────────────────────────────
     def _on_search(self, query: str, source_filter: str) -> None:
@@ -178,11 +272,14 @@ class AppShell:
     def _remove_worker(self, meta: PatchMeta) -> None:
         delete_patch(meta.id)
         card = self._cards.pop(meta.id, None)
-        if card and card.control in self._results_list.controls:
-            self._results_list.controls.remove(card.control)
-        has = len(self._results_list.controls) > 0
+        container = self._active_results_container()
+        if card and card.control in container.controls:
+            container.controls.remove(card.control)
+        self._last_results = [m for m in self._last_results if m.id != meta.id]
+        has = len(container.controls) > 0
         self._empty_state.visible = not has
-        self._results_wrapper.visible = has
+        self._results_wrapper.visible = has and self._view_mode == "list"
+        self._results_grid_wrapper.visible = has and self._view_mode == "grid"
         self.page.update()
 
     # ── Art loading ─────────────────────────────────────────────────────────
@@ -279,7 +376,16 @@ class AppShell:
                 padding=ft.Padding.only(left=14),
             ),
             leading_width=52,
-            title=ft.Text("KatanaToneStream", weight=ft.FontWeight.BOLD, size=17, color="#FFFFFF"),
+            title=ft.Row(
+                [
+                    ft.Text(
+                        "KatanaToneStream", weight=ft.FontWeight.BOLD, size=17, color="#FFFFFF"
+                    ),
+                    self._build_tab_switcher(),
+                ],
+                spacing=18,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
             center_title=False,
             bgcolor=theme.SURFACE_VAR,
             actions=[
@@ -321,43 +427,38 @@ class AppShell:
             expand=True,
         )
         self._results_wrapper = ft.Container(content=self._results_list, expand=True, visible=False)
-        results_area = ft.Stack([self._empty_state, self._results_wrapper], expand=True)
+        self._results_grid = ft.GridView(
+            max_extent=170,
+            child_aspect_ratio=0.55,
+            spacing=10,
+            run_spacing=10,
+            padding=ft.Padding.symmetric(horizontal=14, vertical=10),
+        )
+        self._results_grid_wrapper = ft.Container(
+            content=self._results_grid, expand=True, visible=False
+        )
+        results_area = ft.Stack(
+            [self._empty_state, self._results_wrapper, self._results_grid_wrapper], expand=True
+        )
 
         library_tab = ft.Column(
-            [self.search_bar.control, ft.Divider(height=1, color=theme.BORDER_DIM), results_area],
+            [
+                self.search_bar.control,
+                ft.Divider(height=1, color=theme.BORDER_DIM),
+                results_area,
+            ],
             spacing=0,
             expand=True,
         )
 
-        # Create lands first/selected — generation is the app's primary flow, browsing
-        # existing patches is the secondary one.
-        self._tabs = ft.Tabs(
-            length=2,
-            selected_index=_CREATE_TAB,
-            expand=True,
-            content=ft.Column(
-                [
-                    ft.TabBar(
-                        tabs=[
-                            ft.Tab(label="Create", icon=ft.Icons.AUTO_AWESOME),
-                            ft.Tab(label="Library", icon=ft.Icons.LIBRARY_MUSIC_OUTLINED),
-                        ],
-                        indicator_color=theme.AMBER,
-                        label_color="#FFFFFF",
-                        unselected_label_color=theme.TEXT_DIM,
-                    ),
-                    ft.TabBarView(
-                        controls=[self.generate_panel.control, library_tab],
-                        expand=True,
-                    ),
-                ],
-                spacing=0,
-                expand=True,
-            ),
-        )
+        # Create/Library is switched via the chips built into the AppBar title
+        # (_build_tab_switcher); this stack just shows whichever is active.
+        self._create_view = ft.Container(self.generate_panel.control, expand=True, visible=True)
+        self._library_view = ft.Container(library_tab, expand=True, visible=False)
+        tab_content = ft.Stack([self._create_view, self._library_view], expand=True)
 
         content_row = ft.Row(
-            [self._tabs, self.settings_pane.control, self.log_panel.control],
+            [tab_content, self.settings_pane.control, self.log_panel.control],
             spacing=0,
             expand=True,
             vertical_alignment=ft.CrossAxisAlignment.STRETCH,
