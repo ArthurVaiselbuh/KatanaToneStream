@@ -1,8 +1,9 @@
 """Tests for llm_generator — 3-phase generation plus the refinement chat.
 
-Phase 1 (character) is free-form prose; phases 2 (types) and 3 (values) are
-structured JSON. The phase-1 analysis must be woven into both later prompts.
-ToneSession records every turn and refine() re-sends the full history.
+All three generation phases (and refine) reply with JSON carrying a "message"
+field, so every assistant turn displays uniformly in the UI. The phase-1
+analysis must be woven into both later prompts. ToneSession records every
+turn and refine() re-sends the full history.
 """
 
 import json
@@ -54,9 +55,13 @@ def _make_response(content: str):
     return resp
 
 
+def _character_response():
+    return _make_response(json.dumps({"message": _CHARACTER}))
+
+
 def _happy_side_effect():
     return [
-        _make_response(_CHARACTER),
+        _character_response(),
         _make_response(json.dumps(_TYPES)),
         _make_response(json.dumps(_VALUES)),
     ]
@@ -133,7 +138,7 @@ def test_empty_character_phase_raises(mock_completion):
 @patch("litellm.completion")
 def test_types_phase_json_failure_raises(mock_completion):
     mock_completion.side_effect = [
-        _make_response(_CHARACTER),
+        _character_response(),
         _make_response("oops"),
         _make_response("still not json"),  # corrective retry also fails
     ]
@@ -144,7 +149,7 @@ def test_types_phase_json_failure_raises(mock_completion):
 @patch("litellm.completion")
 def test_values_phase_json_failure_raises(mock_completion):
     mock_completion.side_effect = [
-        _make_response(_CHARACTER),
+        _character_response(),
         _make_response(json.dumps(_TYPES)),
         _make_response("oops"),
         _make_response("still not json"),  # corrective retry also fails
@@ -186,7 +191,7 @@ def test_auth_error_gives_clear_message(mock_completion):
 def test_non_json_error_message_is_short(mock_completion):
     huge_blob = "x" * 5000
     mock_completion.side_effect = [
-        _make_response(_CHARACTER),
+        _character_response(),
         _make_response(huge_blob),
         _make_response(huge_blob),
     ]
@@ -207,7 +212,7 @@ def test_type_values_snapped_to_catalog(mock_completion):
         reverb_type=50,  # beyond max → snaps to 6
     )
     mock_completion.side_effect = [
-        _make_response(_CHARACTER),
+        _character_response(),
         _make_response(json.dumps(out_of_range)),
         _make_response(json.dumps(_VALUES)),
     ]
@@ -224,7 +229,7 @@ def test_hidden_preamp_gap_snaps_to_nearest(mock_completion):
     # 27 is not in PREAMP_TYPES (26/27 unknown); nearest offered id is 28.
     gap_types = dict(_TYPES, preamp_type=27)
     mock_completion.side_effect = [
-        _make_response(_CHARACTER),
+        _character_response(),
         _make_response(json.dumps(gap_types)),
         _make_response(json.dumps(_VALUES)),
     ]
@@ -236,7 +241,7 @@ def test_hidden_preamp_gap_snaps_to_nearest(mock_completion):
 def test_continuous_values_clamped(mock_completion):
     out_of_range_values = dict(_VALUES, preamp_gain=999, bass=-5)
     mock_completion.side_effect = [
-        _make_response(_CHARACTER),
+        _character_response(),
         _make_response(json.dumps(_TYPES)),
         _make_response(json.dumps(out_of_range_values)),
     ]
@@ -384,6 +389,9 @@ def test_session_generate_records_history(mock_completion):
     assert user_entries[0].label.startswith("Phase 1/3")
     assert user_entries[1].label.startswith("Phase 2/3")
     assert user_entries[2].label.startswith("Phase 3/3")
+    # Every phase replies with JSON now, so the character analysis (like a
+    # refine reply) displays as its "message" field rather than raw JSON.
+    assert session.history[1].display == _CHARACTER
     # on_entry streamed every recorded entry, in order.
     assert entries_seen == session.history
     # api_messages strips to plain role/content for the provider.

@@ -49,10 +49,10 @@ class PatchGenerationError(Exception):
 # ---------------------------------------------------------------------------
 
 # A single system prompt governs the whole multi-step conversation (generation
-# phases, free chat, and refinement alike); each user turn states the output
-# format it needs — prose vs. a raw JSON object — so there is no per-phase
-# system prompt. The Katana reference below is appended to it (_SYSTEM_FULL),
-# putting the catalogs and ranges in context from the very first turn.
+# phases, free chat, and refinement alike); every reply is JSON with "message"
+# plus whatever fields that turn's own prompt asks for, so there is no
+# per-phase system prompt. The Katana reference below is appended to it
+# (_SYSTEM_FULL), putting the catalogs and ranges in context from turn one.
 _SYSTEM = """\
 You are a guitar tone expert who knows the Boss Katana Mk2 inside out, along with the amps
 and pedals famous guitarists use. You work with the user in one ongoing conversation: they
@@ -68,9 +68,14 @@ pedal, or effect type (pick ids from the catalogs in the reference below).
 If a request is ambiguous, pick the most likely
 interpretation and say briefly what you assumed.
 
-Draw on the whole conversation so far, and follow the output format each message asks
-for exactly: plain prose when asked to analyze, otherwise a single raw JSON object with no
-markdown and no code fences.
+The amp patch only covers the signal chain after the guitar — if pickups (e.g. single-coil
+vs. humbucker, neck vs. bridge), the guitar's own volume/tone knob settings, or playing
+technique (picking dynamics, palm muting, etc.) would meaningfully shape this tone, say so
+briefly wherever you're writing prose. Skip it when it wouldn't change what the player does.
+
+Draw on the whole conversation so far. Always reply with a single raw JSON object — no
+markdown, no code fences — with "message" holding whatever you'd say in prose, plus any
+other fields that turn's instructions ask for.
 """
 
 # Machine-readable Katana reference appended to the system prompt. Living in the
@@ -101,7 +106,9 @@ Song: {song}
 Analyze this guitar tone so it can be recreated on a Boss Katana Mk2. In a few sentences,
 describe the overall character (gain level, EQ balance, dynamics) and which effect categories
 are audibly active: booster/overdrive, modulation/FX, delay, and reverb. Mention the specific
-amps and pedals this artist is known for using. Write plainly — no JSON, no headings.
+amps and pedals this artist is known for using etc.
+
+Reply with ONLY a JSON object: {{"message": "<your analysis, plain prose, no headings>"}}
 """
 
 # Turn 2 — type selection. Your analysis is already in the conversation and the
@@ -220,9 +227,12 @@ def _short(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _schema(*, integers: tuple[str, ...] = (), booleans: tuple[str, ...] = ()) -> dict:
+def _schema(
+    *, strings: tuple[str, ...] = (), integers: tuple[str, ...] = (), booleans: tuple[str, ...] = ()
+) -> dict:
     """Build a strict JSON schema (all fields required, no extras) for a phase."""
-    props: dict[str, dict] = {name: {"type": "integer"} for name in integers}
+    props: dict[str, dict] = {name: {"type": "string"} for name in strings}
+    props.update({name: {"type": "integer"} for name in integers})
     props.update({name: {"type": "boolean"} for name in booleans})
     return {
         "type": "object",
@@ -232,6 +242,13 @@ def _schema(*, integers: tuple[str, ...] = (), booleans: tuple[str, ...] = ()) -
     }
 
 
+def _require_fields(data: dict, required: list[str], phase: str) -> None:
+    for key in required:
+        if key not in data:
+            raise ValueError(f"{phase} missing field '{key}'")
+
+
+_CHARACTER_SCHEMA = _schema(strings=("message",))
 _TYPES_SCHEMA = _schema(
     integers=("preamp_type", "od_type", "fx1_type", "fx2_type", "delay_type", "reverb_type")
 )
@@ -572,17 +589,6 @@ class ToneSession:
             except Exception:
                 log.exception("on_request callback failed")
 
-    def _ask_text(self, user_content: str, *, label: str, temperature: float = 0.4) -> str:
-        """Free-form turn; commit and return the assistant's prose."""
-        user_entry = ChatEntry("user", user_content, label=label, auto=True)
-        self._notify_request(user_entry)
-        working = [*self._messages, {"role": "user", "content": user_content}]
-        raw = self._complete(working, temperature, {})
-        if not raw:
-            raise ValueError("model returned an empty response")
-        self._commit(user_entry, raw)
-        return raw
-
     def _ask_json(
         self,
         user_content: str,
@@ -629,16 +635,18 @@ class ToneSession:
     def _phase_character(self, artist: str, song: str, extra: str) -> str:
         prompt = _PROMPT_CHARACTER.format(artist=artist, song=song, extra_block=_extra_block(extra))
         log.debug("LLM phase 1/3 (character) prompt:\n%s", prompt)
-        text = self._ask_text(prompt, label=_LABEL_CHARACTER)
+        data = self._ask_json(prompt, _CHARACTER_SCHEMA, "katana_character", label=_LABEL_CHARACTER)
+        _require_fields(data, _CHARACTER_SCHEMA["required"], "Character phase")
+        text = str(data["message"]).strip()
+        if not text:
+            raise ValueError("Character phase 'message' is empty")
         log.debug("LLM phase 1/3 (character) analysis:\n%s", text)
         return text
 
     def _phase_types(self) -> dict:
         data = self._ask_json(_PROMPT_TYPES, _TYPES_SCHEMA, "katana_types", label=_LABEL_TYPES)
         log.debug("LLM phase 2/3 (types) parsed response: %s", data)
-        for key in ("preamp_type", "od_type", "fx1_type", "fx2_type", "delay_type", "reverb_type"):
-            if key not in data:
-                raise ValueError(f"Types phase missing field '{key}'")
+        _require_fields(data, _TYPES_SCHEMA["required"], "Types phase")
         result = {
             "preamp_type": _snap_type(data["preamp_type"], PREAMP_TYPES, "preamp_type"),
             "od_type": _snap_type(data["od_type"], OD_TYPES, "od_type"),
@@ -671,25 +679,7 @@ class ToneSession:
         )
         data = self._ask_json(prompt, _VALUES_SCHEMA, "katana_values", label=_LABEL_VALUES)
         log.debug("LLM phase 3/3 (values) parsed response: %s", data)
-        required = (
-            "preamp_gain",
-            "bass",
-            "mid",
-            "treble",
-            "presence",
-            "od_on",
-            "od_drive",
-            "od_level",
-            "fx1_on",
-            "fx2_on",
-            "delay_on",
-            "delay_level",
-            "reverb_on",
-            "reverb_level",
-        )
-        for key in required:
-            if key not in data:
-                raise ValueError(f"Values phase missing field '{key}'")
+        _require_fields(data, _VALUES_SCHEMA["required"], "Values phase")
         result = {
             "preamp_gain": _clamp(data["preamp_gain"], 0, 120, "preamp_gain"),
             "bass": _clamp(data["bass"], 0, 100, "bass"),
